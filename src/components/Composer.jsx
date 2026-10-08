@@ -30,15 +30,6 @@ export default function Composer({
                         <p className="leading-[18px]">{destination}</p>
                       </div>
                     </div>
-                    <div className="relative shrink-0">
-                      <div className="flex flex-col items-start pl-[2px] relative size-full">
-                        <button type="button" className="flex items-center relative shrink-0 cursor-pointer">
-                          <div className="h-[9.333px] relative shrink-0 w-[11.667px]">
-                            <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-dest-caret.svg`} />
-                          </div>
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 </div>
               </div>

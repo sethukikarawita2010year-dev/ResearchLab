@@ -27,7 +27,7 @@ const historyGroups = [
   },
 ];
 
-const folders = [
+export const folders = [
   { name: "All Papers", count: "14", icon: `${A}/ws-folder-active.svg`, muted: false },
   { name: "Thesis", count: "4", icon: `${A}/ws-folder-muted.svg`, muted: true },
   { name: "ML Papers", count: "8", icon: `${A}/ws-folder-muted.svg`, muted: true },
