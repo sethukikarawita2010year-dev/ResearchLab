@@ -1,3 +1,7 @@
+import { useState } from "react";
+import { usePdfAttachment, PdfFileInput, PdfChip } from "./PdfAttachment";
+import { uploadPdf } from "../lib/api";
+
 const A = "/assets";
 
 export default function Composer({
@@ -6,6 +10,31 @@ export default function Composer({
   destination = "ML Papers",
   disabled = false,
 }) {
+  const [text, setText] = useState("");
+  const [status, setStatus] = useState("");
+  const [sending, setSending] = useState(false);
+  const { file, error, inputRef, open, onChange, clear } = usePdfAttachment();
+
+  const handleSend = async () => {
+    if (disabled || sending) return;
+    if (!file && !text.trim()) return;
+
+    setSending(true);
+    setStatus("");
+    try {
+      if (file) {
+        const uploaded = await uploadPdf(file);
+        setStatus(`Attached ${uploaded.filename}`);
+      }
+      setText("");
+      clear();
+    } catch (err) {
+      setStatus(err.message || "Upload failed");
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div className="absolute bg-gradient-to-t bottom-0 content-stretch flex flex-col from-[#0b0d13] items-start left-[260px] px-[90px] pt-[16px] pb-[20px] right-0 to-[rgba(11,13,19,0)] via-50% via-[rgba(11,13,19,0.95)] z-10">
       <div className="backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[9px] relative rounded-[12px] shrink-0 w-full">
@@ -37,19 +66,37 @@ export default function Composer({
           </div>
         )}
 
+        {(file || error || status) && (
+          <div className="relative shrink-0 w-full">
+            <div className="flex flex-wrap items-center gap-[6px] px-[5px] pb-[2px] pt-[6px]">
+              {file && <PdfChip file={file} onRemove={clear} />}
+              {error && <span className="font-inter text-[12px] text-[#f87171]">{error}</span>}
+              {!error && status && <span className="font-inter text-[12px] text-[#94a3b8]">{status}</span>}
+            </div>
+          </div>
+        )}
+
         <div className="relative shrink-0 w-full">
           <div className="flex gap-[4px] items-center px-[4px] relative size-full">
             <button
               type="button"
-              className="content-stretch flex flex-col items-center justify-center p-[8px] relative rounded-[8px] shrink-0 cursor-pointer"
+              onClick={open}
+              aria-label="Attach a PDF"
+              className="content-stretch flex flex-col items-center justify-center p-[8px] relative rounded-[8px] shrink-0 cursor-pointer hover:bg-[#1b202e] transition-colors"
             >
               <div className="h-[16.667px] relative shrink-0 w-[10.417px]">
                 <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-attach.svg`} />
               </div>
             </button>
+            <PdfFileInput inputRef={inputRef} onChange={onChange} />
             <div className="content-stretch flex flex-1 flex-col items-start min-w-px overflow-clip pb-[11px] pt-[10px] px-[12px] relative">
               <input
                 type="text"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSend();
+                }}
                 placeholder={placeholder}
                 disabled={disabled}
                 className="bg-transparent w-full font-inter font-normal text-[14px] text-[#f8fafc] placeholder:text-[#64748b] outline-none border-0 p-0"
@@ -57,8 +104,9 @@ export default function Composer({
             </div>
             <button
               type="button"
+              onClick={handleSend}
               className={`bg-[#4f46e5] relative rounded-[12px] shrink-0 size-[40px] cursor-pointer shadow-[0px_4px_6px_-1px_rgba(49,46,129,0.4),0px_2px_4px_-2px_rgba(49,46,129,0.4)] ${
-                disabled ? "opacity-40" : ""
+                disabled || sending ? "opacity-40" : ""
               }`}
             >
               <div className="flex items-center justify-center relative size-full">

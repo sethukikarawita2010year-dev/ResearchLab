@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { folders } from "../components/Sidebar";
 import Composer from "../components/Composer";
+import { createSession, renameSession } from "../lib/api";
 
 const A = "/assets";
 
@@ -12,6 +13,50 @@ export default function Workspace() {
   const folderRowsRef = useRef(null);
   const folderHighlightRef = useRef(null);
   const folderRowRefs = useRef({});
+
+  const [sessionTitle, setSessionTitle] = useState("New research session");
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const titleInputRef = useRef(null);
+  const sessionIdRef = useRef(null);
+  const titleCommittingRef = useRef(false);
+
+  useEffect(() => {
+    if (isEditingTitle && titleInputRef.current) {
+      titleInputRef.current.focus();
+      titleInputRef.current.select();
+    }
+  }, [isEditingTitle]);
+
+  const startEditingTitle = () => {
+    setTitleDraft(sessionTitle === "New research session" ? "" : sessionTitle);
+    setIsEditingTitle(true);
+  };
+
+  const persistTitle = async (next) => {
+    try {
+      if (sessionIdRef.current) {
+        await renameSession(sessionIdRef.current, next);
+      } else {
+        const created = await createSession(next);
+        sessionIdRef.current = created.id;
+      }
+    } catch {
+      /* backend is optional during UI-only use */
+    }
+  };
+
+  const commitTitle = () => {
+    if (titleCommittingRef.current) return;
+    titleCommittingRef.current = true;
+    const next = titleDraft.trim() || "New research session";
+    setSessionTitle(next);
+    setIsEditingTitle(false);
+    persistTitle(next);
+    setTimeout(() => {
+      titleCommittingRef.current = false;
+    }, 0);
+  };
 
   useEffect(() => {
     if (!isFolderOpen) return undefined;
@@ -173,9 +218,35 @@ export default function Workspace() {
                     <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-chevron.svg`} />
                   </div>
                   <div className="content-stretch flex flex-col items-start relative shrink-0">
-                    <div className="flex flex-col font-inter font justify-center relative shrink-0 text-[#94a3b8] text-[16px] whitespace-nowrap">
-                      <p className="leading-[24px]">New research session</p>
-                    </div>
+                    {isEditingTitle ? (
+                      <input
+                        ref={titleInputRef}
+                        type="text"
+                        value={titleDraft}
+                        onChange={(e) => setTitleDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitTitle();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setIsEditingTitle(false);
+                          }
+                        }}
+                        onBlur={commitTitle}
+                        placeholder="New research session"
+                        className="bg-[#1b202e] border border-[#2a3044] border-solid rounded-[4px] px-[6px] py-[2px] font-inter font-normal text-[16px] leading-[24px] text-[#f8fafc] placeholder:text-[#64748b] outline-none focus:border-[#6366f1]"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={startEditingTitle}
+                        title="Click to rename session"
+                        className="flex flex-col font-inter font justify-center relative shrink-0 text-[#94a3b8] text-[16px] whitespace-nowrap cursor-text text-left"
+                      >
+                        <p className="leading-[24px]">{sessionTitle}</p>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
