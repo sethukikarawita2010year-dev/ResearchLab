@@ -78,8 +78,8 @@ function EngineOption({ option, checked, onToggle }) {
           <span className="absolute bg-[#11141d] border border-[#2a3044] border-solid left-[-1px] rounded-[4px] size-[16px] top-[7.63px]" />
         )}
       </div>
-      <div className="flex flex-col items-start relative shrink-0">
-        <div className="flex flex-col font-inter font-semibold text-[13px] text-white tracking-[0.13px] whitespace-nowrap">
+      <div className="flex flex-col items-start relative flex-1 min-w-0">
+        <div className="flex flex-col font-inter font-semibold text-[13px] text-white tracking-[0.13px]">
           <p className="leading-[16px]">{option.title}</p>
         </div>
         <div className="flex flex-col pt-[2px] w-full">
@@ -94,6 +94,7 @@ function EngineOption({ option, checked, onToggle }) {
 
 export default function PDFConverter() {
   const [checked, setChecked] = useState([true, true, false]);
+  const [showSettings, setShowSettings] = useState(false);
 
   const toggle = (i) =>
     setChecked((prev) => prev.map((v, idx) => (idx === i ? !v : v)));
@@ -107,18 +108,10 @@ export default function PDFConverter() {
       }}
     >
       <div className="bg-[#0b0d13] h-full w-full overflow-y-auto pt-[64px]">
-        <div className="pl-[260px] px-[24px] w-full">
+        <div className="pl-[280px] px-[24px] w-full">
           <div className="flex flex-col items-start relative w-full">
-            <div className="flex items-end py-[24px] relative shrink-0 w-full">
+            <div className="flex items-end justify-between py-[24px] relative shrink-0 w-full">
               <div className="flex flex-col gap-[2.9px] items-start max-w-[672px] relative shrink-0">
-                <div className="flex gap-[4px] items-center relative shrink-0 w-full">
-                  <div className="relative shrink-0 size-[13.333px]">
-                    <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-sparkle.svg`} />
-                  </div>
-                  <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#818cf8] text-[16px] tracking-[0.8px] uppercase whitespace-nowrap">
-                    <p className="leading-[24px]">VECTOR SYNTHESIS &amp; INGESTION ENGINE</p>
-                  </div>
-                </div>
                 <div className="flex flex-col items-start pt-[1.1px] relative shrink-0 w-full">
                   <h1 className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[28px] text-white tracking-[-0.7px] whitespace-nowrap">
                     <p className="leading-[36px]">PDF Converter</p>
@@ -131,11 +124,56 @@ export default function PDFConverter() {
                   </div>
                 </div>
               </div>
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowSettings((v) => !v)}
+                  aria-expanded={showSettings}
+                  className="bg-[#161922] border border-[#2a3044] border-solid flex items-center justify-center rounded-[12px] shrink-0 size-[44px] cursor-pointer"
+                >
+                  <div className="relative shrink-0 size-[15px]">
+                    <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-settings.svg`} />
+                  </div>
+                </button>
+                {showSettings && (
+                  <div className="absolute right-[44px] top-0 z-50 bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex flex-col items-start p-[17px] pr-[50px] rounded-[12px] w-[360px]">
+                    <div className="flex items-center justify-between relative w-full">
+                      <div className="flex gap-[4px] items-center relative shrink-0">
+                        <div className="relative shrink-0 size-[15px]">
+                          <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-settings.svg`} />
+                        </div>
+                        <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[18px] text-white tracking-[-0.18px] whitespace-nowrap">
+                          <p className="leading-[15px]">Converter Settings</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowSettings(false)}
+                        className="bg-[#11141d] border border-[#1e2230] border-solid flex items-center justify-center p-px relative rounded-[8px] shrink-0 size-[28px] cursor-pointer"
+                      >
+                        <div className="h-[5.55px] relative shrink-0 w-[9px] -rotate-90">
+                          <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-chevron.svg`} />
+                        </div>
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-[12px] items-start pt-[16px] relative w-full">
+                      {engineOptions.map((option, i) => (
+                        <EngineOption
+                          key={option.title}
+                          option={option}
+                          checked={checked[i]}
+                          onToggle={() => toggle(i)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-12 gap-x-[24px] gap-y-[24px] grid-rows-[590px] pb-[32px] relative shrink-0 w-full">
-              <div className="col-[1/span_8] flex flex-col gap-[24px] items-start self-start relative">
-                <div className="bg-[#161922] border-2 border-[#2a3044] border-dashed flex flex-col items-start overflow-clip p-[34px] relative rounded-[12px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] shrink-0 w-full">
+            <div className="flex flex-col gap-[24px] px-[110px] pb-[32px] relative shrink-0 w-full">
+              <div className="flex flex-col gap-[24px] items-start self-start relative w-full">
+                <div className="bg-[#161922] border-2 border-[#2a3044] border-dashed flex flex-col items-start overflow-clip p-[34px] px-[50px] relative rounded-[12px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] shrink-0 w-full">
                   <div className="absolute bg-[rgba(99,102,241,0.1)] blur-[32px] right-[-64px] rounded-[9999px] size-[224px] top-[-64px]" />
                   <div className="relative shrink-0 w-full">
                     <div className="flex flex-col items-center px-[12px] py-[16px] relative w-full">
@@ -181,7 +219,7 @@ export default function PDFConverter() {
                   </div>
                 </div>
 
-                <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col items-start overflow-clip p-[25px] relative rounded-[12px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] shrink-0 w-full">
+                <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col items-start overflow-clip p-[25px] px-[50px] relative rounded-[12px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] shrink-0 w-full">
                   <div className="absolute bg-[#6366f1] bottom-0 left-0 top-0 w-[6px]" />
                   <div className="relative shrink-0 w-full">
                     <div className="flex flex-col gap-[16px] items-start pl-[4px] relative w-full">
@@ -272,45 +310,10 @@ export default function PDFConverter() {
                 </div>
               </div>
 
-              <div className="col-[9/span_4] flex flex-col items-start pb-[240px] self-start relative">
-                <div className="bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex flex-col items-start p-[25px] relative rounded-[12px] shrink-0 w-full">
-                  <div className="flex items-center justify-between relative w-full">
-                    <div className="flex gap-[4px] items-center relative shrink-0">
-                      <div className="relative shrink-0 size-[15px]">
-                        <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-settings.svg`} />
-                      </div>
-                      <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[18px] text-white tracking-[-0.18px] whitespace-nowrap">
-                        <p className="leading-[26px]">Engine Settings</p>
-                      </div>
-                      <div className="flex flex-col items-start pl-[4px] relative shrink-0">
-                        <div className="bg-[#222738] border border-[#2a3044] border-solid flex flex-col items-start px-[5px] py-[3px] relative rounded-[9999px] shrink-0">
-                          <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-[#cbd5e1] text-[11px] tracking-[0.33px] whitespace-nowrap">
-                            <p className="leading-[14px]">3 options</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="bg-[#11141d] border border-[#1e2230] border-solid flex items-center justify-center p-px relative rounded-[8px] shrink-0 size-[28px]">
-                      <div className="h-[5.55px] relative shrink-0 w-[9px]">
-                        <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-chevron.svg`} />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-[12px] items-start pt-[16px] relative w-full">
-                    {engineOptions.map((option, i) => (
-                      <EngineOption
-                        key={option.title}
-                        option={option}
-                        checked={checked[i]}
-                        onToggle={() => toggle(i)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
+              {/* CONVERTER SETTINGS BOX — temporarily removed from this spot; it now opens from the top-left settings icon. Say "bring the converter settings box" to restore the full block here. */}
             </div>
 
-            <div className="flex flex-col gap-[12px] items-start pb-[48px] relative shrink-0 w-full">
+            <div className="flex flex-col gap-[12px] items-start px-[110px] pb-[48px] relative shrink-0 w-full">
               <div className="flex items-center justify-between relative shrink-0 w-full">
                 <div className="flex flex-col items-start relative shrink-0">
                   <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[22px] text-white tracking-[-0.33px] whitespace-nowrap">
@@ -349,36 +352,36 @@ export default function PDFConverter() {
                   </colgroup>
                   <thead>
                     <tr className="bg-[#12151e] border-b border-[#2a3044] border-solid">
-                      <th className="text-left px-[24px] py-[19px]">
+                      <th className="text-left px-[17px] py-[19px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px]">FILE NAME</p>
                         </div>
                       </th>
-                      <th className="text-left px-[16px] py-[12px]">
+                      <th className="text-left px-[11px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">ORIGINAL</p>
                           <p className="leading-[14px]">FORMAT</p>
                         </div>
                       </th>
-                      <th className="text-left px-[16px] py-[12px]">
+                      <th className="text-left px-[11px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">OUTPUT</p>
                           <p className="leading-[14px]">SIZE</p>
                         </div>
                       </th>
-                      <th className="text-left px-[16px] py-[12px]">
+                      <th className="text-left px-[11px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">CONVERTED</p>
                           <p className="leading-[14px]">DATE</p>
                         </div>
                       </th>
-                      <th className="text-left px-[16px] py-[12px]">
+                      <th className="text-left px-[11px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">FOLDER</p>
                           <p className="leading-[14px]">DESTINATION</p>
                         </div>
                       </th>
-                      <th className="text-right px-[24px] py-[19px]">
+                      <th className="text-right px-[17px] py-[19px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px]">ACTIONS</p>
                         </div>
@@ -393,7 +396,7 @@ export default function PDFConverter() {
                           i === conversions.length - 1 ? "" : "border-b border-solid"
                         }`}
                       >
-                        <td className="px-[24px] py-[20px]">
+                        <td className="px-[17px] py-[20px]">
                           <div className="flex gap-[12px] items-center">
                             <div className="bg-[#222738] border border-[#2a3044] border-solid flex items-center justify-center p-px relative rounded-[8px] shrink-0 size-[36px]">
                               <div className={`relative shrink-0 ${row.iconCls}`}>
@@ -410,24 +413,24 @@ export default function PDFConverter() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-[16px] py-[20px]">
+                        <td className="px-[11px] py-[20px]">
                           <div className="bg-[#222738] border border-[#2a3044] border-solid inline-flex items-start px-[9px] py-[1.5px] relative rounded-[4px]">
                             <div className="flex flex-col font-mono font-medium justify-center relative text-[#e2e8f0] text-[13px] whitespace-nowrap">
                               <p className="leading-[20px]">{row.format}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-[16px] py-[20px]">
+                        <td className="px-[11px] py-[20px]">
                           <div className="flex flex-col font-mono font-normal justify-center relative text-[#94a3b8] text-[13px] whitespace-nowrap">
                             <p className="leading-[20px]">{row.size}</p>
                           </div>
                         </td>
-                        <td className="px-[16px] py-[20px]">
+                        <td className="px-[11px] py-[20px]">
                           <div className="flex flex-col font-inter font-normal justify-center relative text-[#94a3b8] text-[13px] whitespace-nowrap">
                             <p className="leading-[18px]">{row.date}</p>
                           </div>
                         </td>
-                        <td className="px-[16px] py-[20px]">
+                        <td className="px-[11px] py-[20px]">
                           <div className="bg-[#222738] border border-[#2a3044] border-solid inline-flex gap-[4px] items-center px-[9px] py-[5px] relative rounded-[9999px]">
                             <div className="h-[9.333px] relative shrink-0 w-[11.667px]">
                               <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-folder-small.svg`} />
@@ -437,14 +440,18 @@ export default function PDFConverter() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-[24px] py-[20px]">
-                          <div className="flex gap-[4px] items-center justify-end">
+                        <td className="px-[17px] py-[20px]">
+                          <div className="flex gap-[5px] items-center justify-end">
                             <button type="button" className="flex flex-col items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
                               <div className="relative shrink-0 size-[12px]">
                                 <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-action.svg`} />
                               </div>
                             </button>
-                            <div className="relative rounded-[4px] shrink-0 size-[8px]" />
+                            <button type="button" className="flex flex-col items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
+                              <div className="relative shrink-0 size-[12px]">
+                                <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-chat.svg`} />
+                              </div>
+                            </button>
                           </div>
                         </td>
                       </tr>
