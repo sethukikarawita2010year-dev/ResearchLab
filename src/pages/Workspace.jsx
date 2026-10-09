@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import Sidebar, { folders } from "../components/Sidebar";
-import TopNav from "../components/TopNav";
+import { folders } from "../components/Sidebar";
 import Composer from "../components/Composer";
 
 const A = "/assets";
@@ -219,8 +218,6 @@ export default function Workspace() {
       </div>
 
       <Composer destination={selectedFolder} />
-      <TopNav />
-      <Sidebar />
     </div>
   );
 }

@@ -1,5 +1,3 @@
-import Sidebar from "../components/Sidebar";
-import TopNav from "../components/TopNav";
 import { useState } from "react";
 
 const A = "/assets";
@@ -495,8 +493,6 @@ export default function Reader() {
           </div>
         </div>
       </div>
-      <TopNav />
-      <Sidebar />
     </div>
   );
 }

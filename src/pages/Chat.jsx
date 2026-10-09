@@ -1,6 +1,4 @@
 import { useState } from "react";
-import Sidebar from "../components/Sidebar";
-import TopNav from "../components/TopNav";
 
 const A = "/assets";
 
@@ -509,9 +507,6 @@ export default function Chat() {
           </button>
         </div>
       </div>
-
-      <TopNav />
-      <Sidebar />
     </div>
   );
 }
