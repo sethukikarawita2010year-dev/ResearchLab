@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { usePdfAttachment, PdfFileInput, PdfChip } from "../components/PdfAttachment";
 import { uploadPdf } from "../lib/api";
+import { useSidebar } from "../components/sidebarContext";
 
 const A = "/assets";
 
@@ -91,6 +92,7 @@ const sectionTitles = {
 };
 
 export default function Chat() {
+  const { collapsed } = useSidebar();
   const [open, setOpen] = useState({ s1: true, s2: true, s3: true, s4: true, s5: true });
   const [webSearch, setWebSearch] = useState(true);
   const [query, setQuery] = useState("");
@@ -122,7 +124,9 @@ export default function Chat() {
 
   return (
     <div
-      className="content-stretch flex flex-col items-start pl-[260px] relative size-full min-h-screen"
+      className={`content-stretch flex flex-col items-start relative transition-[padding] duration-200 ease-out size-full min-h-screen ${
+        collapsed ? "px-[130px]" : "pl-[260px]"
+      }`}
       style={{
         backgroundImage:
           "linear-gradient(90deg, rgb(11, 13, 19) 0%, rgb(11, 13, 19) 100%), linear-gradient(90deg, rgb(255, 255, 255) 0%, rgb(255, 255, 255) 100%)",

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSidebar } from "../components/sidebarContext";
 
 const A = "/assets";
 const imgContainer = "/assets/rv-imgContainer.svg";
@@ -25,6 +26,7 @@ const imgContainer18 = "/assets/rv-imgContainer18.svg";
 const imgContainer19 = "/assets/rv-imgContainer19.svg";
 
 export default function Reader() {
+  const { collapsed } = useSidebar();
   const [page, setPage] = useState(4);
   const [zoom, setZoom] = useState(100);
   const [splitView, setSplitView] = useState(true);
@@ -38,7 +40,9 @@ export default function Reader() {
 
   return (
     <div
-      className="content-stretch flex flex-col items-start pl-[260px] relative size-full min-h-screen"
+      className={`content-stretch flex flex-col items-start relative transition-[padding] duration-200 ease-out size-full min-h-screen ${
+        collapsed ? "px-[130px]" : "pl-[260px]"
+      }`}
       style={{
         backgroundImage:
           "linear-gradient(90deg, rgb(11, 13, 19) 0%, rgb(11, 13, 19) 100%), linear-gradient(90deg, rgb(255, 255, 255) 0%, rgb(255, 255, 255) 100%)",

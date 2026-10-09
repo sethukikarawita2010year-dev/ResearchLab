@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createFolder, useFolders } from "../lib/folderStore";
+import { useSidebar } from "./sidebarContext";
 
 const A = "/assets";
 
@@ -39,6 +40,7 @@ export default function Sidebar() {
   const [editingChatId, setEditingChatId] = useState("");
   const [editDraft, setEditDraft] = useState("");
   const [renamedTitles, setRenamedTitles] = useState({});
+  const { collapsed, toggle } = useSidebar();
   const folderHighlightRef = useRef(null);
   const folderRowsRef = useRef(null);
   const folderRowRefs = useRef({});
@@ -88,33 +90,52 @@ export default function Sidebar() {
   }, [selectedFolder, folderList]);
 
   return (
-    <aside className="absolute bg-[#11141d] border-[#1e2230] border-r border-solid flex flex-col items-start left-0 overflow-clip pr-px top-0 bottom-0 w-[260px]">
-      <div className="flex-1 min-h-px relative w-full">
-        <div className="flex flex-col items-start relative size-full">
-          <div className="border-[rgba(30,34,48,0.5)] border-b border-solid flex items-center justify-between pb-[17px] pt-[16px] px-[16px] relative shrink-0 w-full">
-            <Link to="/library" className="relative shrink-0">
-              <div className="flex gap-[8px] items-center relative size-full">
-                <div className="bg-[#6366f1] drop-shadow-[0px_1px_1px_rgba(99,102,241,0.2)] flex items-center justify-center relative rounded-[8px] shrink-0 size-[28px]">
-                  <div className="relative shrink-0 size-[16px]">
-                    <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-logo.svg`} />
-                  </div>
-                </div>
-                <div className="content-stretch flex flex-col items-start relative shrink-0">
-                  <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#f8fafc] text-[14px] tracking-[-0.35px] whitespace-nowrap">
-                    <p className="leading-[22px]">ResearchLab</p>
-                  </div>
-                </div>
+    <aside
+      className={`absolute flex flex-col items-start left-0 overflow-clip pr-px top-0 transition-[height,background-color] duration-200 ease-out w-[260px] ${
+        collapsed
+          ? "backdrop-blur-[12px] bg-[rgba(11,13,19,0.85)]"
+          : "bg-[#11141d] border-[#1e2230] border-r border-solid"
+      }`}
+      style={{ height: collapsed ? "65px" : "100%" }}
+    >
+      <div className="border-[#1e2230] border-b border-solid flex items-center justify-between h-[65px] px-[16px] relative shrink-0 w-full">
+        <Link to="/library" className="relative shrink-0">
+          <div className="flex gap-[8px] items-center relative size-full">
+            <div className="bg-[#6366f1] drop-shadow-[0px_1px_1px_rgba(99,102,241,0.2)] flex items-center justify-center relative rounded-[10px] shrink-0 size-[35px]">
+              <div className="relative shrink-0 size-[20px]">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-logo.svg`} />
               </div>
-            </Link>
-            <button type="button" className="relative rounded-[4px] shrink-0 cursor-pointer">
-              <div className="flex flex-col items-center justify-center pb-[8px] pt-[2px] px-[2px] relative size-full">
-                <div className="relative shrink-0 size-[13.5px]">
-                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-collapse.svg`} />
-                </div>
+            </div>
+            <div className="content-stretch flex flex-col items-start relative shrink-0">
+              <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#f8fafc] text-[17.5px] tracking-[-0.35px] whitespace-nowrap">
+                <p className="leading-[28px]">ResearchLab</p>
               </div>
-            </button>
+            </div>
           </div>
+        </Link>
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={collapsed ? "Expand sidebar" : "Minimise sidebar"}
+          className="relative rounded-[4px] shrink-0 cursor-pointer"
+        >
+          <div className="flex flex-col items-center justify-center p-[2px] relative size-full">
+            <div className="relative shrink-0 size-[17.55px]">
+              <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-collapse.svg`} />
+            </div>
+          </div>
+        </button>
+      </div>
 
+      <div
+        className={`flex flex-1 flex-col min-h-px origin-top transition-[opacity,transform] duration-200 ease-out w-full ${
+          collapsed
+            ? "opacity-0 pointer-events-none [transform:scaleY(0.7)]"
+            : "opacity-100 [transform:scaleY(1)]"
+        }`}
+      >
+        <div className="flex-1 min-h-px relative w-full">
+          <div className="flex flex-col items-start relative size-full">
           <div className="content-stretch flex flex-col items-start px-[16px] py-[12px] relative shrink-0 w-full">
             <button
               type="button"
@@ -359,6 +380,7 @@ export default function Sidebar() {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </aside>
   );

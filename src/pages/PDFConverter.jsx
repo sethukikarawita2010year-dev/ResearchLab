@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { convertFile, conversionDownloadUrl, listConversions } from "../lib/api";
 import { useFolders } from "../lib/folderStore";
+import { useSidebar } from "../components/sidebarContext";
 
 const A = "/assets";
 
@@ -115,6 +116,7 @@ const initialConversions = [
 
 export default function PDFConverter() {
   const folders = useFolders();
+  const { collapsed } = useSidebar();
   const [selectedFormat, setSelectedFormat] = useState(null);
   const [showFormatWarning, setShowFormatWarning] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -371,7 +373,7 @@ export default function PDFConverter() {
       }}
     >
       <div className="bg-[#0b0d13] h-full w-full overflow-y-auto pt-[64px]">
-        <div className="pl-[280px] px-[24px] w-full">
+        <div className={`transition-[padding] duration-200 ease-out w-full ${collapsed ? "px-[152px]" : "pl-[280px] px-[24px]"}`}>
           <div className="flex flex-col items-start relative w-full">
             <div className="flex items-end justify-between py-[24px] relative shrink-0 w-full">
               <div className="flex flex-col gap-[2.9px] items-start max-w-[672px] relative shrink-0">

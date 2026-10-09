@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useFolders } from "../lib/folderStore";
 import Composer from "../components/Composer";
+import { useSidebar } from "../components/sidebarContext";
 import { createSession, renameSession } from "../lib/api";
 
 const A = "/assets";
 
 export default function Workspace() {
   const folders = useFolders();
+  const { collapsed } = useSidebar();
   const [selectedFolder, setSelectedFolder] = useState("ML Papers");
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const folderTriggerRef = useRef(null);
@@ -112,7 +114,9 @@ export default function Workspace() {
 
   return (
     <div
-      className="content-stretch flex flex-col items-start pl-[260px] relative w-full h-screen overflow-hidden"
+      className={`content-stretch flex flex-col items-start relative transition-[padding] duration-200 ease-out w-full h-screen overflow-hidden ${
+        collapsed ? "px-[130px]" : "pl-[260px]"
+      }`}
       style={{
         backgroundImage:
           "linear-gradient(90deg, rgb(11, 13, 19) 0%, rgb(11, 13, 19) 100%), linear-gradient(90deg, rgb(255, 255, 255) 0%, rgb(255, 255, 255) 100%)",

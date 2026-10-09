@@ -6,21 +6,24 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Shell from "./components/Shell";
 import { PdfSlideProvider } from "./components/PdfSlide";
+import { SidebarProvider } from "./components/sidebarContext";
 
 export default function App() {
   return (
     <PdfSlideProvider>
-      <Routes>
-        <Route element={<Shell />}>
-          <Route path="/" element={<Workspace />} />
-          <Route path="/library" element={<Workspace />} />
-          <Route path="/chat" element={<Chat />} />
-          <Route path="/reader" element={<Reader />} />
-        </Route>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <SidebarProvider>
+        <Routes>
+          <Route element={<Shell />}>
+            <Route path="/" element={<Workspace />} />
+            <Route path="/library" element={<Workspace />} />
+            <Route path="/chat" element={<Chat />} />
+            <Route path="/reader" element={<Reader />} />
+          </Route>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </SidebarProvider>
     </PdfSlideProvider>
   );
 }
