@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { folders } from "../components/Sidebar";
+import { useFolders } from "../lib/folderStore";
 import Composer from "../components/Composer";
+import { useSidebar } from "../components/sidebarContext";
 import { createSession, renameSession } from "../lib/api";
 
 const A = "/assets";
 
 export default function Workspace() {
+  const folders = useFolders();
+  const { collapsed } = useSidebar();
   const [selectedFolder, setSelectedFolder] = useState("ML Papers");
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const folderTriggerRef = useRef(null);
@@ -107,11 +110,13 @@ export default function Workspace() {
       popup.style.width = "";
       rowsWrap.style.maxHeight = "";
     }
-  }, [selectedFolder, isFolderOpen]);
+  }, [selectedFolder, isFolderOpen, folders]);
 
   return (
     <div
-      className="content-stretch flex flex-col items-start pl-[260px] relative w-full h-screen overflow-hidden"
+      className={`content-stretch flex flex-col items-start relative transition-[padding] duration-200 ease-out w-full h-screen overflow-hidden ${
+        collapsed ? "px-[130px]" : "pl-[260px]"
+      }`}
       style={{
         backgroundImage:
           "linear-gradient(90deg, rgb(11, 13, 19) 0%, rgb(11, 13, 19) 100%), linear-gradient(90deg, rgb(255, 255, 255) 0%, rgb(255, 255, 255) 100%)",
@@ -196,7 +201,7 @@ export default function Workspace() {
                                 <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
                                   <div
                                     className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] text-center whitespace-nowrap ${
-                                      f.muted ? "text-[#94a3b8]" : "text-[#cbd5e1]"
+                                      isSelected ? "text-white" : "text-[#94a3b8]"
                                     }`}
                                   >
                                     <p className="leading-[18px]">{f.name}</p>

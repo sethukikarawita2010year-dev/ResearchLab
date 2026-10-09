@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { usePdfAttachment, PdfFileInput, PdfChip } from "./PdfAttachment";
 import { uploadPdf } from "../lib/api";
+import { useSidebar } from "./sidebarContext";
 
 const A = "/assets";
 
@@ -10,6 +11,7 @@ export default function Composer({
   destination = "ML Papers",
   disabled = false,
 }) {
+  const { collapsed } = useSidebar();
   const [text, setText] = useState("");
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
@@ -36,7 +38,7 @@ export default function Composer({
   };
 
   return (
-    <div className="absolute bg-gradient-to-t bottom-0 content-stretch flex flex-col from-[#0b0d13] items-start left-[260px] px-[90px] pt-[16px] pb-[20px] right-0 to-[rgba(11,13,19,0)] via-50% via-[rgba(11,13,19,0.95)] z-10">
+    <div className={`absolute bg-gradient-to-t bottom-0 content-stretch flex flex-col from-[#0b0d13] items-start px-[90px] transition-[left,right] duration-200 ease-out pt-[16px] pb-[20px] to-[rgba(11,13,19,0)] via-50% via-[rgba(11,13,19,0.95)] z-10 ${collapsed ? "left-[130px] right-[130px]" : "left-[260px] right-0"}`}>
       <div className="backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[9px] relative rounded-[12px] shrink-0 w-full">
         <div className="absolute bg-[rgba(255,255,255,0)] inset-[-1px_-1px_-1.33px_-1px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] pointer-events-none" />
 

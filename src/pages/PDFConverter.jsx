@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { folders } from "../components/Sidebar";
 import { convertFile, conversionDownloadUrl, listConversions } from "../lib/api";
+import { useFolders } from "../lib/folderStore";
+import { useSidebar } from "../components/sidebarContext";
 
 const A = "/assets";
 
@@ -114,6 +115,8 @@ const initialConversions = [
 ];
 
 export default function PDFConverter() {
+  const folders = useFolders();
+  const { collapsed } = useSidebar();
   const [selectedFormat, setSelectedFormat] = useState(null);
   const [showFormatWarning, setShowFormatWarning] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -272,7 +275,7 @@ export default function PDFConverter() {
       popup.style.width = "";
       rowsWrap.style.maxHeight = "";
     }
-  }, [selectedFolder, isFolderOpen]);
+  }, [selectedFolder, isFolderOpen, folders]);
 
   useEffect(() => {
     if (!isFilterOpen) return undefined;
@@ -370,7 +373,7 @@ export default function PDFConverter() {
       }}
     >
       <div className="bg-[#0b0d13] h-full w-full overflow-y-auto pt-[64px]">
-        <div className="pl-[280px] px-[24px] w-full">
+        <div className={`transition-[padding] duration-200 ease-out w-full ${collapsed ? "px-[152px]" : "pl-[280px] px-[24px]"}`}>
           <div className="flex flex-col items-start relative w-full">
             <div className="flex items-end justify-between py-[24px] relative shrink-0 w-full">
               <div className="flex flex-col gap-[2.9px] items-start max-w-[672px] relative shrink-0">
@@ -599,7 +602,7 @@ export default function PDFConverter() {
                                         <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
                                           <div
                                             className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] text-center whitespace-nowrap ${
-                                              f.muted ? "text-[#94a3b8]" : "text-[#cbd5e1]"
+                                              isSelected ? "text-white" : "text-[#94a3b8]"
                                             }`}
                                           >
                                             <p className="leading-[18px]">{f.name}</p>
