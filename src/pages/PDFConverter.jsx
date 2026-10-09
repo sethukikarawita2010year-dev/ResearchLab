@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { folders } from "../components/Sidebar";
 import { convertFile, conversionDownloadUrl, listConversions } from "../lib/api";
+import { useFolders } from "../lib/folderStore";
 
 const A = "/assets";
 
@@ -114,6 +114,7 @@ const initialConversions = [
 ];
 
 export default function PDFConverter() {
+  const folders = useFolders();
   const [selectedFormat, setSelectedFormat] = useState(null);
   const [showFormatWarning, setShowFormatWarning] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -272,7 +273,7 @@ export default function PDFConverter() {
       popup.style.width = "";
       rowsWrap.style.maxHeight = "";
     }
-  }, [selectedFolder, isFolderOpen]);
+  }, [selectedFolder, isFolderOpen, folders]);
 
   useEffect(() => {
     if (!isFilterOpen) return undefined;
@@ -599,7 +600,7 @@ export default function PDFConverter() {
                                         <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
                                           <div
                                             className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] text-center whitespace-nowrap ${
-                                              f.muted ? "text-[#94a3b8]" : "text-[#cbd5e1]"
+                                              isSelected ? "text-white" : "text-[#94a3b8]"
                                             }`}
                                           >
                                             <p className="leading-[18px]">{f.name}</p>

@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { folders } from "../components/Sidebar";
+import { useFolders } from "../lib/folderStore";
 import Composer from "../components/Composer";
 import { createSession, renameSession } from "../lib/api";
 
 const A = "/assets";
 
 export default function Workspace() {
+  const folders = useFolders();
   const [selectedFolder, setSelectedFolder] = useState("ML Papers");
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const folderTriggerRef = useRef(null);
@@ -107,7 +108,7 @@ export default function Workspace() {
       popup.style.width = "";
       rowsWrap.style.maxHeight = "";
     }
-  }, [selectedFolder, isFolderOpen]);
+  }, [selectedFolder, isFolderOpen, folders]);
 
   return (
     <div
@@ -196,7 +197,7 @@ export default function Workspace() {
                                 <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
                                   <div
                                     className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] text-center whitespace-nowrap ${
-                                      f.muted ? "text-[#94a3b8]" : "text-[#cbd5e1]"
+                                      isSelected ? "text-white" : "text-[#94a3b8]"
                                     }`}
                                   >
                                     <p className="leading-[18px]">{f.name}</p>

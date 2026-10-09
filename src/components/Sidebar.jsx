@@ -1,4 +1,6 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { createFolder, useFolders } from "../lib/folderStore";
 
 const A = "/assets";
 
@@ -27,14 +29,63 @@ const historyGroups = [
   },
 ];
 
-export const folders = [
-  { name: "All Papers", count: "14", icon: `${A}/ws-folder-active.svg`, muted: false },
-  { name: "Thesis", count: "4", icon: `${A}/ws-folder-muted.svg`, muted: true },
-  { name: "ML Papers", count: "8", icon: `${A}/ws-folder-muted.svg`, muted: true },
-];
-
 export default function Sidebar() {
   const navigate = useNavigate();
+  const [selectedFolder, setSelectedFolder] = useState("All Papers");
+  const [selectedChat, setSelectedChat] = useState("");
+  const folderList = useFolders();
+  const [isFolderPopupOpen, setIsFolderPopupOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [editingChatId, setEditingChatId] = useState("");
+  const [editDraft, setEditDraft] = useState("");
+  const [renamedTitles, setRenamedTitles] = useState({});
+  const folderHighlightRef = useRef(null);
+  const folderRowsRef = useRef(null);
+  const folderRowRefs = useRef({});
+  const folderNameInputRef = useRef(null);
+
+  const handleAddFolder = () => {
+    createFolder(newFolderName);
+    setNewFolderName("");
+    setIsFolderPopupOpen(false);
+  };
+
+  const commitRename = (originalTitle) => {
+    const next = editDraft.trim();
+    setRenamedTitles((prev) => {
+      const copy = { ...prev };
+      if (next) copy[originalTitle] = next;
+      else delete copy[originalTitle];
+      return copy;
+    });
+    setEditingChatId("");
+  };
+
+  useLayoutEffect(() => {
+    if (isFolderPopupOpen && folderNameInputRef.current) {
+      folderNameInputRef.current.focus();
+    }
+  }, [isFolderPopupOpen]);
+
+  useLayoutEffect(() => {
+    const highlight = folderHighlightRef.current;
+    const row = folderRowRefs.current[selectedFolder];
+    if (highlight && row) {
+      highlight.style.height = `${row.offsetHeight}px`;
+      highlight.style.transform = `translateY(${row.offsetTop}px)`;
+    }
+
+    const rowsWrap = folderRowsRef.current;
+    if (rowsWrap && folderList.length > 5) {
+      const firstRow = folderRowRefs.current[folderList[0].name];
+      const fifthRow = folderRowRefs.current[folderList[4].name];
+      if (firstRow && fifthRow) {
+        rowsWrap.style.maxHeight = `${fifthRow.offsetTop + fifthRow.offsetHeight - firstRow.offsetTop}px`;
+      }
+    } else if (rowsWrap) {
+      rowsWrap.style.maxHeight = "";
+    }
+  }, [selectedFolder, folderList]);
 
   return (
     <aside className="absolute bg-[#11141d] border-[#1e2230] border-r border-solid flex flex-col items-start left-0 overflow-clip pr-px top-0 bottom-0 w-[260px]">
@@ -85,72 +136,183 @@ export default function Sidebar() {
             <div className="content-stretch flex flex-col gap-[4px] items-start px-[16px] relative shrink-0 w-full">
               <div className="content-stretch flex items-center justify-between relative shrink-0 w-full">
                 <div className="content-stretch flex flex-col items-start relative shrink-0">
-                  <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase whitespace-nowrap">
-                    <p className="leading-[16.5px]">Corpus &amp; Folders</p>
+                  <div className="flex flex-col font-inter font-extrabold justify-center relative shrink-0 text-[#c1cee0] text-[14.6px] tracking-[0.55px] uppercase whitespace-nowrap">
+                    <p className="leading-[20.8px]">Corpus &amp; Folders</p>
                   </div>
                 </div>
-                <button type="button" className="h-[10.667px] relative shrink-0 w-[13.333px] cursor-pointer">
+                <button
+                  type="button"
+                  aria-expanded={isFolderPopupOpen}
+                  onClick={() => setIsFolderPopupOpen((v) => !v)}
+                  className="h-[13.867px] relative shrink-0 w-[17.333px] cursor-pointer"
+                >
                   <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-plus.svg`} />
                 </button>
+                <div
+                  aria-hidden={!isFolderPopupOpen}
+                  className={`absolute backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid left-0 mt-[6px] origin-top p-[4px] right-0 rounded-[8px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] top-full transition-[opacity,transform] duration-200 ease-out z-50 ${
+                    isFolderPopupOpen
+                      ? "animate-[folder-popup-in_180ms_ease-out] opacity-100 pointer-events-auto [transform:translateY(0)_scaleY(1)]"
+                      : "opacity-0 pointer-events-none [transform:translateY(-6px)_scaleY(0.65)]"
+                  }`}
+                >
+                  <div className="content-stretch flex items-center gap-[7px] px-[8px] py-[4px] relative w-full">
+                    <img alt="" className="h-[10.667px] relative shrink-0 w-[13.333px]" src={`${A}/ws-folder-white.svg`} />
+                    <input
+                      ref={folderNameInputRef}
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleAddFolder();
+                      }}
+                      maxLength={150}
+                      placeholder="Folder name"
+                      className="bg-transparent border-0 flex-1 font-inter font-normal min-w-px outline-none p-0 text-[13px] text-white placeholder:text-[#64748b]"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddFolder}
+                      className="bg-[#4f46e5] flex items-center justify-center px-[12px] py-[5px] relative rounded-[8px] shrink-0 cursor-pointer shadow-[0px_10px_15px_-3px_rgba(79,70,229,0.2),0px_4px_6px_-4px_rgba(79,70,229,0.2)]"
+                    >
+                      <p className="font-inter font-medium leading-[16px] text-[13px] text-center text-white tracking-[0.13px] whitespace-nowrap">
+                        Done
+                      </p>
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="content-stretch flex flex-col gap-[2px] items-start relative shrink-0 w-full">
-                {folders.map((f) => (
-                  <button
-                    key={f.name}
-                    type="button"
-                    className="content-stretch flex items-center justify-between px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full cursor-pointer hover:bg-[#161922]"
-                  >
-                    <div className="content-stretch flex gap-[8px] items-center overflow-clip relative shrink-0">
-                      <div className="h-[10.667px] relative shrink-0 w-[13.333px]">
-                        <img alt="" className="absolute block inset-0 max-w-none size-full" src={f.icon} />
-                      </div>
-                      <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
-                        <div
-                          className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] text-center whitespace-nowrap ${
-                            f.muted ? "text-[#94a3b8]" : "text-[#cbd5e1]"
-                          }`}
-                        >
-                          <p className="leading-[18px]">{f.name}</p>
+              <div
+                ref={folderRowsRef}
+                className="content-stretch flex flex-col gap-[2px] items-start no-scrollbar overflow-y-auto relative shrink-0 w-full"
+              >
+                <div
+                  ref={folderHighlightRef}
+                  aria-hidden="true"
+                  className="absolute bg-[#1b202e] left-0 right-0 rounded-[8px] top-0 pointer-events-none transition-[transform,height] duration-200 ease-out"
+                />
+                {folderList.map((f) => {
+                  const isSelected = f.name === selectedFolder;
+                  return (
+                    <button
+                      key={f.name}
+                      ref={(el) => {
+                        folderRowRefs.current[f.name] = el;
+                      }}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => setSelectedFolder(f.name)}
+                      className={`content-stretch flex items-center justify-between px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full cursor-pointer ${
+                        isSelected ? "" : "hover:bg-[#161922]"
+                      }`}
+                    >
+                      <div className="content-stretch flex gap-[8px] items-center overflow-clip relative shrink-0">
+                        <div className="h-[10.667px] relative shrink-0 w-[13.333px]">
+                          <img
+                            alt=""
+                            className="absolute block inset-0 max-w-none size-full"
+                            src={isSelected ? `${A}/ws-folder-active.svg` : `${A}/ws-folder-white.svg`}
+                          />
+                        </div>
+                        <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
+                          <div
+                            className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] text-center whitespace-nowrap ${
+                              isSelected ? "text-white" : "text-[#94a3b8]"
+                            }`}
+                          >
+                            <p className="leading-[18px]">{f.name}</p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="bg-[#1b202e] border border-[#2a3044] border-solid content-stretch flex flex-col items-center px-[5px] py-[3px] relative rounded-[4px] shrink-0">
-                      <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
-                        <p className="leading-[18px]">{f.count}</p>
+                      <div className="bg-[#1b202e] border border-[#2a3044] border-solid content-stretch flex flex-col items-center px-[5px] py-[3px] relative rounded-[4px] shrink-0">
+                        <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
+                          <p className="leading-[18px]">{f.count}</p>
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
 
-          <div className="content-stretch flex flex-1 flex-col gap-[12px] items-start min-h-px overflow-auto px-[16px] relative w-full">
+          <div className="content-stretch flex flex-1 flex-col gap-[12px] items-start min-h-px overflow-auto no-scrollbar px-[16px] relative w-full">
             {historyGroups.map((group) => (
               <div
                 key={group.label}
                 className="content-stretch flex flex-col gap-[2px] items-start pt-[5.5px] relative shrink-0 w-full"
               >
-                <div className="flex flex-col font-inter font-extrabold justify-center relative shrink-0 text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase whitespace-nowrap">
-                  <p className="leading-[16.5px]">{group.label}</p>
+                <div className="flex flex-col font-inter font-extrabold justify-center relative shrink-0 text-[#c1cee0] text-[14.6px] tracking-[0.55px] uppercase whitespace-nowrap">
+                  <p className="leading-[19.8px]">{group.label}</p>
                 </div>
-                {group.items.map((item) => (
-                  <Link
-                    key={item.title}
-                    to={item.to}
-                    className={`content-stretch flex flex-col items-start overflow-clip px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full hover:bg-[#161922] ${
-                      item.active ? "text-[#cbd5e1]" : ""
-                    }`}
-                  >
-                    <div
-                      className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] overflow-hidden relative shrink-0 text-ellipsis w-full ${
-                        item.active ? "text-[#cbd5e1]" : "text-[#94a3b8]"
+{group.items.map((item) => {
+                  const isSelected = item.title === selectedChat;
+                  const displayTitle = renamedTitles[item.title] || item.title;
+                  const isEditing = editingChatId === item.title;
+                  return (
+                    <Link
+                      key={item.title}
+                      to={item.to}
+                      onClick={() => setSelectedChat(item.title)}
+                      className={`group content-stretch flex flex-col items-start overflow-clip px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full transition-colors ${
+                        isSelected ? "bg-[#1b202e]" : "hover:bg-[#161922]"
                       }`}
                     >
-                      <p className="leading-[18px]">{item.title}</p>
-                    </div>
-                  </Link>
-                ))}
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitRename(item.title);
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              setEditingChatId("");
+                            }
+                          }}
+                          maxLength={150}
+                          className="bg-[#12151e] border border-[#2a3044] border-solid flex-1 font-inter font-normal min-w-px outline-none px-[6px] py-[1px] rounded-[4px] text-[13px] w-full text-[#f8fafc] focus:border-[#6366f1]"
+                        />
+                      ) : (
+                        <div className="content-stretch flex items-center gap-[8px] overflow-clip relative shrink-0 w-full">
+                          <div
+                            className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] overflow-hidden relative shrink-0 text-ellipsis flex-1 min-w-px ${
+                              isSelected ? "text-[#cbd5e1]" : "text-[#94a3b8]"
+                            }`}
+                          >
+                            <p className="leading-[18px]">{displayTitle}</p>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label={`Rename ${displayTitle}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setEditingChatId(item.title);
+                              setEditDraft(displayTitle);
+                            }}
+                            className="flex items-center justify-center opacity-0 group-hover:opacity-100 p-[2px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#e2e8f0] transition-opacity"
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                            </svg>
+                          </button>
+                        </div>
+                      )}
+                    </Link>
+                  );
+                })}
               </div>
             ))}
           </div>
