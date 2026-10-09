@@ -1,6 +1,6 @@
 import { useState } from "react";
-import Sidebar from "../components/Sidebar";
-import TopNav from "../components/TopNav";
+import { usePdfAttachment, PdfFileInput, PdfChip } from "../components/PdfAttachment";
+import { uploadPdf } from "../lib/api";
 
 const A = "/assets";
 
@@ -94,6 +94,29 @@ export default function Chat() {
   const [open, setOpen] = useState({ s1: true, s2: true, s3: true, s4: true, s5: true });
   const [webSearch, setWebSearch] = useState(true);
   const [query, setQuery] = useState("");
+  const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState("");
+  const { file, error, inputRef, open: openPdf, onChange: onPdfChange, clear: clearPdf } = usePdfAttachment();
+
+  const handleSend = async () => {
+    if (sending) return;
+    if (!file && !query.trim()) return;
+
+    setSending(true);
+    setStatus("");
+    try {
+      if (file) {
+        const uploaded = await uploadPdf(file);
+        setStatus(`Attached ${uploaded.filename}`);
+      }
+      setQuery("");
+      clearPdf();
+    } catch (err) {
+      setStatus(err.message || "Upload failed");
+    } finally {
+      setSending(false);
+    }
+  };
 
   const toggle = (key) => setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
 
@@ -483,35 +506,50 @@ export default function Chat() {
 
       {/* Persistent floating query console */}
       <div className="absolute bottom-0 content-stretch flex flex-col items-center left-[89px] p-[16px] right-[171px] z-10">
-        <div className="backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid content-stretch flex gap-[8px] items-center max-w-[760px] pl-[13px] pr-[5px] py-[5px] relative rounded-[16px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] w-[760px]">
-          <button
-            type="button"
-            className="content-stretch flex flex-col items-center justify-center pb-[10px] pt-[4px] px-[4px] relative rounded-[8px] shrink-0 cursor-pointer hover:bg-[#1b202e]"
-          >
-            <img alt="" src={`${A}/chat-attach.svg`} className="h-[16.667px] w-[10.417px] shrink-0" />
-          </button>
-          <div className="flex-1 min-w-px relative">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Ask a question about this paper, test hypotheses, or probe equations..."
-              className="bg-transparent border-0 font-inter font-normal text-[14px] text-[#f8fafc] leading-normal outline-none p-0 placeholder:text-[#64748b] w-full"
-            />
-          </div>
-          <button
-            type="button"
-            className="bg-[#4f46e5] relative rounded-[12px] shrink-0 size-[40px] cursor-pointer shadow-[0px_4px_6px_-1px_rgba(49,46,129,0.4),0px_2px_4px_-2px_rgba(49,46,129,0.4)]"
-          >
-            <div className="flex items-center justify-center relative size-full">
-              <img alt="" src={`${A}/chat-send.svg`} className="relative shrink-0 size-[13.333px]" />
+        <div className="backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid content-stretch flex flex-col max-w-[760px] relative rounded-[16px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] w-[760px]">
+          {(file || error || status) && (
+            <div className="flex flex-wrap items-center gap-[6px] px-[13px] pt-[10px]">
+              {file && <PdfChip file={file} onRemove={clearPdf} />}
+              {error && <span className="font-inter text-[12px] text-[#f87171]">{error}</span>}
+              {!error && status && <span className="font-inter text-[12px] text-[#94a3b8]">{status}</span>}
             </div>
-          </button>
+          )}
+          <div className="content-stretch flex gap-[8px] items-center pl-[13px] pr-[5px] py-[5px]">
+            <button
+              type="button"
+              onClick={openPdf}
+              aria-label="Attach a PDF"
+              className="content-stretch flex flex-col items-center justify-center pb-[10px] pt-[4px] px-[4px] relative rounded-[8px] shrink-0 cursor-pointer hover:bg-[#1b202e]"
+            >
+              <img alt="" src={`${A}/chat-attach.svg`} className="h-[16.667px] w-[10.417px] shrink-0" />
+            </button>
+            <PdfFileInput inputRef={inputRef} onChange={onPdfChange} />
+            <div className="flex-1 min-w-px relative">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSend();
+                }}
+                placeholder="Ask a question about this paper, test hypotheses, or probe equations..."
+                className="bg-transparent border-0 font-inter font-normal text-[14px] text-[#f8fafc] leading-normal outline-none p-0 placeholder:text-[#64748b] w-full"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSend}
+              className={`bg-[#4f46e5] relative rounded-[12px] shrink-0 size-[40px] cursor-pointer shadow-[0px_4px_6px_-1px_rgba(49,46,129,0.4),0px_2px_4px_-2px_rgba(49,46,129,0.4)] ${
+                sending ? "opacity-40" : ""
+              }`}
+            >
+              <div className="flex items-center justify-center relative size-full">
+                <img alt="" src={`${A}/chat-send.svg`} className="relative shrink-0 size-[13.333px]" />
+              </div>
+            </button>
+          </div>
         </div>
       </div>
-
-      <TopNav />
-      <Sidebar />
     </div>
   );
 }
