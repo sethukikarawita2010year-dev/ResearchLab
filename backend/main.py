@@ -6,6 +6,9 @@ GET  /api/health                     liveness probe
 POST /api/sessions                   create a research session (title)
 PATCH /api/sessions/{session_id}     rename a session
 POST /api/upload                     upload a single PDF (pdf-only, size-limited)
+POST /api/convert                    convert a document (docx/csv/html/xlsx/txt/pptx/md) to PDF
+GET  /api/convert/{id}/download      download a converted PDF
+GET  /api/conversions                list saved conversions (newest first)
 
 Run with:
     uvicorn main:app --reload --port 8000
@@ -13,17 +16,23 @@ Run with:
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+
+from conversion import ConversionError, convert_to_pdf
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+CONVERTED_DIR = BASE_DIR / "converted"
+CONVERTED_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
 PDF_MAGIC = b"%PDF-"
@@ -55,6 +64,37 @@ app.add_middleware(
 # In-memory stores (swap for a database later).
 SESSIONS: dict[str, dict] = {}
 UPLOADS: dict[str, dict] = {}
+
+# Conversions are persisted to a small JSON file so the Recent Conversions
+# table survives backend restarts (no external database required).
+CONVERSIONS_FILE = BASE_DIR / "conversions.json"
+
+
+def _load_conversions() -> dict[str, dict]:
+    if not CONVERSIONS_FILE.exists():
+        return {}
+    try:
+        raw = json.loads(CONVERSIONS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if isinstance(raw, dict):
+        return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
+    if isinstance(raw, list):
+        return {str(item.get("id")): item for item in raw if isinstance(item, dict) and item.get("id")}
+    return {}
+
+
+def _save_conversions() -> None:
+    try:
+        CONVERSIONS_FILE.write_text(
+            json.dumps(CONVERSIONS, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+CONVERSIONS: dict[str, dict] = _load_conversions()
 
 
 class SessionCreate(BaseModel):
@@ -123,6 +163,57 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict:
     }
     UPLOADS[upload_id] = record
     return record
+
+
+@app.post("/api/convert", status_code=201)
+async def convert_file(
+    file: UploadFile = File(...),
+    folder: str = Form("All Papers"),
+) -> dict:
+    filename = (file.filename or "document").strip()
+    data = await file.read(MAX_FILE_SIZE + 1)
+    await file.close()
+
+    try:
+        pdf_bytes = await convert_to_pdf(filename, data)
+    except ConversionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    conversion_id = uuid.uuid4().hex
+    pdf_filename = f"{Path(filename).stem or 'document'}.pdf"
+    (CONVERTED_DIR / f"{conversion_id}.pdf").write_bytes(pdf_bytes)
+
+    record = {
+        "id": conversion_id,
+        "filename": filename,
+        "pdf_filename": pdf_filename,
+        "size": len(pdf_bytes),
+        "folder": (folder or "All Papers").strip() or "All Papers",
+        "download_url": f"/convert/{conversion_id}/download",
+        "created_at": _now(),
+    }
+    CONVERSIONS[conversion_id] = record
+    _save_conversions()
+    return record
+
+
+@app.get("/api/conversions")
+def list_conversions() -> dict:
+    items = sorted(
+        CONVERSIONS.values(),
+        key=lambda r: r.get("created_at", ""),
+        reverse=True,
+    )
+    return {"conversions": items}
+
+
+@app.get("/api/convert/{conversion_id}/download")
+def download_conversion(conversion_id: str) -> FileResponse:
+    record = CONVERSIONS.get(conversion_id)
+    path = CONVERTED_DIR / f"{conversion_id}.pdf"
+    if record is None or not path.exists():
+        raise HTTPException(status_code=404, detail="Conversion not found")
+    return FileResponse(path, media_type="application/pdf", filename=record["pdf_filename"])
 
 
 if __name__ == "__main__":
