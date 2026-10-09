@@ -1,5 +1,6 @@
 uploads/
 converted/
+conversions.json
 __pycache__/
 *.pyc
 .venv/

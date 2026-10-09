@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { folders } from "../components/Sidebar";
-import { convertFile, conversionDownloadUrl } from "../lib/api";
+import { convertFile, conversionDownloadUrl, listConversions } from "../lib/api";
 
 const A = "/assets";
 
@@ -23,20 +23,48 @@ const formatBytes = (bytes) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-const engineOptions = [
-  {
-    title: "Make text searchable",
-    desc: "Ability to highlight, copy, and search words inside the PDF.",
-  },
-  {
-    title: "Keep tables intact",
-    desc: "Recognize spreadsheets and tables so rows and columns stay neat.",
-  },
-  {
-    title: "Compress file size",
-    desc: "Shrink the file so it's easy to share without losing image sharpness.",
-  },
+const filterOptions = [
+  { key: "Newest", icon: `${A}/pc-filter.svg`, iconCls: "h-[8px] w-[12px]" },
+  { key: "Oldest", icon: `${A}/pc-filter.svg`, iconCls: "h-[8px] w-[12px]" },
+  { key: "MD", icon: `${A}/pc-md.svg`, iconCls: "h-[10px] w-[16.667px]" },
+  { key: "XLSX", icon: `${A}/pc-xlsx.svg`, iconCls: "size-[15px]" },
+  { key: "PPTX", icon: `${A}/pc-pptx.svg`, iconCls: "size-[15px]" },
+  { key: "CSV", icon: `${A}/pc-csv.svg`, iconCls: "size-[15px]" },
+  { key: "DOCX", icon: `${A}/pc-doc.svg`, iconCls: "h-[18px] w-[14.4px]" },
+  { key: "HTML", icon: `${A}/pc-html.svg`, iconCls: "size-[15px]" },
+  { key: "TXT", icon: `${A}/pc-txt.svg`, iconCls: "size-[15px]" },
 ];
+
+const formatConversionDate = (iso) => {
+  const t = Date.parse(iso);
+  if (!t) return "Just now";
+  const diff = Date.now() - t;
+  if (diff < 60_000) return "Just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(t).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
+const rowFromRecord = (rec) => {
+  const ext = (((rec.filename || "").match(/\.[^.]+$/) || [])[0] || "").toLowerCase();
+  const meta = fileTypeMeta[ext] || fileTypeMeta[".docx"];
+  return {
+    id: `converted-${rec.id}`,
+    name: rec.filename || "document.pdf",
+    meta: "Converted to PDF",
+    icon: meta.icon,
+    iconCls: meta.listIcon,
+    format: ext.replace(".", "").toUpperCase() || "PDF",
+    size: formatBytes(rec.size),
+    date: formatConversionDate(rec.created_at),
+    ts: Date.parse(rec.created_at) || Date.now(),
+    folder: rec.folder,
+  };
+};
 
 const initialConversions = [
   {
@@ -48,6 +76,7 @@ const initialConversions = [
     size: "420 KB",
     date: "Today, 11:20 AM",
     folder: "Thesis",
+    ts: Date.parse("2026-10-09T11:20:00"),
   },
   {
     name: "Model_Ablation_Study_Data.xlsx",
@@ -58,6 +87,7 @@ const initialConversions = [
     size: "1.2 MB",
     date: "Yesterday",
     folder: "ML Papers",
+    ts: Date.parse("2026-10-08T12:00:00"),
   },
   {
     name: "NeurIPS_Presentation_Draft.pptx",
@@ -68,6 +98,7 @@ const initialConversions = [
     size: "8.4 MB",
     date: "Oct 24, 2024",
     folder: "All Papers",
+    ts: Date.parse("2024-10-24T00:00:00"),
   },
   {
     name: "Survey_Human_Evaluation.csv",
@@ -78,42 +109,11 @@ const initialConversions = [
     size: "310 KB",
     date: "Oct 22, 2024",
     folder: "Biomedical AI",
+    ts: Date.parse("2024-10-22T00:00:00"),
   },
 ];
 
-function EngineOption({ option, checked, onToggle }) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className="flex gap-[12px] items-start p-[8px] relative rounded-[8px] shrink-0 w-full cursor-pointer text-left hover:bg-[#1b202e]"
-    >
-      <div className="h-[26px] relative shrink-0 w-[16px]">
-        {checked ? (
-          <span className="absolute bg-[#4f46e5] flex items-center justify-center left-[-1px] overflow-clip rounded-[4px] size-[18px] top-[6.63px]">
-            <img alt="" className="relative size-[16px]" src={`${A}/pc-checkbox.svg`} />
-          </span>
-        ) : (
-          <span className="absolute bg-[#11141d] border border-[#2a3044] border-solid left-[-1px] rounded-[4px] size-[16px] top-[7.63px]" />
-        )}
-      </div>
-      <div className="flex flex-col items-start relative flex-1 min-w-0">
-        <div className="flex flex-col font-inter font-semibold text-[13px] text-white tracking-[0.13px]">
-          <p className="leading-[16px]">{option.title}</p>
-        </div>
-        <div className="flex flex-col pt-[2px] w-full">
-          <div className="flex flex-col font-inter font-normal text-[#cbd5e1] text-[13px] w-full">
-            <p className="leading-[16.25px]">{option.desc}</p>
-          </div>
-        </div>
-      </div>
-    </button>
-  );
-}
-
 export default function PDFConverter() {
-  const [checked, setChecked] = useState([true, true, false]);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedFormat, setSelectedFormat] = useState(null);
   const [showFormatWarning, setShowFormatWarning] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -126,17 +126,21 @@ export default function PDFConverter() {
   const [progress, setProgress] = useState(0);
   const [conversionSeconds, setConversionSeconds] = useState(null);
   const [conversionRows, setConversionRows] = useState(initialConversions);
+  const [filterMode, setFilterMode] = useState("Newest");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
   const fileInputRef = useRef(null);
   const folderTriggerRef = useRef(null);
   const folderPopupRef = useRef(null);
   const folderRowsRef = useRef(null);
   const folderHighlightRef = useRef(null);
   const folderRowRefs = useRef({});
+  const filterTriggerRef = useRef(null);
+  const filterPopupRef = useRef(null);
+  const filterRowsRef = useRef(null);
+  const filterHighlightRef = useRef(null);
+  const filterRowRefs = useRef({});
   const progressTimerRef = useRef(null);
   const downloadedRef = useRef(false);
-
-  const toggle = (i) =>
-    setChecked((prev) => prev.map((v, idx) => (idx === i ? !v : v)));
 
   const handleSelectLocalFile = () => {
     if (!selectedFormat) {
@@ -212,22 +216,7 @@ export default function PDFConverter() {
 
       if (!downloadedRef.current) {
         downloadedRef.current = true;
-        const ext = ((uploadedFile?.name.match(/\.[^.]+$/) || [])[0] || selectedFormat || "").toLowerCase();
-        const meta = fileTypeMeta[ext] || fileTypeMeta[".docx"];
-        setConversionRows((prev) => [
-          {
-            id: `converted-${convertedPdf.id}`,
-            name: uploadedFile?.name || "document.pdf",
-            meta: "Converted to PDF",
-            icon: meta.icon,
-            iconCls: meta.listIcon,
-            format: ext.replace(".", "").toUpperCase() || "PDF",
-            size: formatBytes(convertedPdf.size),
-            date: "Just now",
-            folder: selectedFolder,
-          },
-          ...prev,
-        ]);
+        setConversionRows((prev) => [rowFromRecord(convertedPdf), ...prev]);
       }
     } catch (err) {
       setConversionError(err.message || "Download failed.");
@@ -285,6 +274,66 @@ export default function PDFConverter() {
     }
   }, [selectedFolder, isFolderOpen]);
 
+  useEffect(() => {
+    if (!isFilterOpen) return undefined;
+
+    const handleMouseDown = (e) => {
+      if (filterPopupRef.current && filterPopupRef.current.contains(e.target)) return;
+      if (filterTriggerRef.current && filterTriggerRef.current.contains(e.target)) return;
+      setIsFilterOpen(false);
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") setIsFilterOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isFilterOpen]);
+
+  useLayoutEffect(() => {
+    const popup = filterPopupRef.current;
+    const rowsWrap = filterRowsRef.current;
+    const highlight = filterHighlightRef.current;
+    if (!popup || !rowsWrap || !highlight) return;
+
+    const selectedRow = filterRowRefs.current[filterMode];
+    if (selectedRow) {
+      highlight.style.height = `${selectedRow.offsetHeight}px`;
+      highlight.style.transform = `translateY(${selectedRow.offsetTop}px)`;
+    }
+
+    if (filterOptions.length > 5) {
+      rowsWrap.style.maxHeight = "";
+      const firstRow = filterRowRefs.current[filterOptions[0].key];
+      const fifthRow = filterRowRefs.current[filterOptions[4].key];
+      if (firstRow && fifthRow) {
+        rowsWrap.style.maxHeight = `${fifthRow.offsetTop + fifthRow.offsetHeight - firstRow.offsetTop}px`;
+      }
+    } else {
+      rowsWrap.style.maxHeight = "";
+    }
+  }, [filterMode, isFilterOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listConversions()
+      .then((recs) => {
+        if (cancelled || !recs.length) return;
+        setConversionRows((prev) => {
+          const seeds = prev.filter((r) => !String(r.id || "").startsWith("converted-"));
+          return [...recs.map(rowFromRecord), ...seeds];
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => () => stopProgressTimer(), []);
 
   const uploadedFileExt = uploadedFile
@@ -293,6 +342,24 @@ export default function PDFConverter() {
   const uploadedFileIcon =
     fileTypeMeta[uploadedFileExt] || fileTypeMeta[selectedFormat] || fileTypeMeta[".docx"];
   const uploadedFileTypeLabel = (uploadedFileExt || selectedFormat || "").toUpperCase();
+
+  const visibleRows = (() => {
+    const rows = [...conversionRows];
+    if (filterMode === "Oldest") {
+      return rows.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    }
+    if (filterMode === "Newest") {
+      return rows.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    }
+    return rows
+      .filter((r) => r.format === filterMode)
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  })();
+
+  const filterCount = (key) =>
+    key === "Newest" || key === "Oldest"
+      ? conversionRows.length
+      : conversionRows.filter((r) => r.format === key).length;
 
   return (
     <div
@@ -315,36 +382,6 @@ export default function PDFConverter() {
                 <div className="flex flex-col items-start pb-[0.625px] relative shrink-0 w-full">
                   <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[14px] whitespace-nowrap">
                     <p className="leading-[22.75px] mb-0">Convert raw research documents, datasets, presentation decks, and notes to clean, searchable research-ready PDFs</p>
-                  </div>
-                </div>
-              </div>
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsSettingsOpen((v) => !v)}
-                  aria-label={isSettingsOpen ? "Close converter settings" : "Open converter settings"}
-                  aria-expanded={isSettingsOpen}
-                  className="bg-[#161922] border border-[#2a3044] border-solid flex items-center justify-center rounded-[12px] shrink-0 size-[50px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6366f1]"
-                >
-                  <div className="relative shrink-0 size-[20px]">
-                    <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-settings.svg`} />
-                  </div>
-                </button>
-                <div
-                  aria-hidden={!isSettingsOpen}
-                  className={`absolute right-[68px] top-0 z-50 bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex flex-col items-start p-[17px] pr-[50px] rounded-[12px] w-[360px] max-w-[80vw] transition-all duration-300 ease-in-out motion-reduce:transition-none ${
-                    isSettingsOpen ? "translate-x-0 opacity-100" : "translate-x-[40px] opacity-0 pointer-events-none"
-                  }`}
-                >
-                  <div className="flex flex-col gap-[12px] items-start relative w-full">
-                    {engineOptions.map((option, i) => (
-                      <EngineOption
-                        key={option.title}
-                        option={option}
-                        checked={checked[i]}
-                        onToggle={() => toggle(i)}
-                      />
-                    ))}
                   </div>
                 </div>
               </div>
@@ -629,8 +666,6 @@ export default function PDFConverter() {
                 </div>
                 )}
               </div>
-
-              {/* CONVERTER SETTINGS BOX — temporarily removed from this spot; it now opens from the top-left settings icon. Say "bring the converter settings box" to restore the full block here. */}
             </div>
 
             <div className="flex flex-col gap-[12px] items-start px-[110px] pb-[48px] relative shrink-0 w-full">
@@ -640,27 +675,83 @@ export default function PDFConverter() {
                     <p className="leading-[30px]">Recent Conversions</p>
                   </div>
                 </div>
-                <div className="flex gap-[4px] items-center relative shrink-0">
-                  <button type="button" className="bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex gap-[4px] items-center px-[13px] py-[7px] relative rounded-[8px] shrink-0 cursor-pointer">
+                <div className="relative shrink-0" ref={filterTriggerRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsFilterOpen((v) => !v)}
+                    aria-label={isFilterOpen ? "Close filter" : "Open filter"}
+                    aria-expanded={isFilterOpen}
+                    className="bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex gap-[4px] items-center px-[13px] py-[7px] relative rounded-[8px] shrink-0 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6366f1]"
+                  >
                     <div className="h-[8px] relative shrink-0 w-[12px]">
                       <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-filter.svg`} />
                     </div>
                     <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-[#e2e8f0] text-[13px] text-center tracking-[0.13px] whitespace-nowrap">
-                      <p className="leading-[16px]">Filter</p>
+                      <p className="leading-[16px]">{filterMode === "Newest" ? "Filter" : filterMode}</p>
                     </div>
                   </button>
-                  <button type="button" className="bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex gap-[4px] items-center px-[13px] py-[7px] relative rounded-[8px] shrink-0 cursor-pointer">
-                    <div className="relative shrink-0 size-[12px]">
-                      <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-clear.svg`} />
+                  <div
+                    aria-hidden={!isFilterOpen}
+                    className={`absolute right-0 top-full mt-[6px] z-50 bg-[rgba(22,25,34,0.95)] backdrop-blur-[12px] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex flex-col items-start p-[4px] rounded-[8px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] origin-top transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none ${
+                      isFilterOpen ? "translate-y-0 opacity-100" : "-translate-y-[8px] opacity-0 pointer-events-none"
+                    }`}
+                    ref={filterPopupRef}
+                  >
+                    <div
+                      className="content-stretch flex flex-col gap-[2px] items-start overflow-y-auto relative w-full"
+                      ref={filterRowsRef}
+                    >
+                      <div
+                        ref={filterHighlightRef}
+                        className="absolute bg-[#1b202e] left-0 right-0 top-0 rounded-[8px] transition-all duration-200 ease-out"
+                        aria-hidden="true"
+                      />
+                      {filterOptions.map((opt) => {
+                        const isSelected = opt.key === filterMode;
+                        const count =
+                          opt.key === "Newest" || opt.key === "Oldest"
+                            ? conversionRows.length
+                            : conversionRows.filter((r) => r.format === opt.key).length;
+                        return (
+                          <button
+                            key={opt.key}
+                            ref={(el) => {
+                              filterRowRefs.current[opt.key] = el;
+                            }}
+                            type="button"
+                            role="option"
+                            aria-selected={isSelected}
+                            disabled={!isFilterOpen}
+                            onClick={() => setFilterMode(opt.key)}
+                            className={`content-stretch flex gap-[20px] items-center justify-between px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full cursor-pointer ${
+                              isSelected ? "" : "hover:bg-[#161922]"
+                            }`}
+                          >
+                            <div className="content-stretch flex gap-[8px] items-center overflow-clip relative shrink-0">
+                              <div className={`relative shrink-0 ${opt.iconCls}`}>
+                                <img alt="" className="absolute block inset-0 max-w-none size-full" src={opt.icon} />
+                              </div>
+                              <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
+                                <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#cbd5e1] text-[13px] text-center whitespace-nowrap">
+                                  <p className="leading-[18px]">{opt.key}</p>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="bg-[#1b202e] border border-[#2a3044] border-solid content-stretch flex flex-col items-center px-[5px] py-[3px] relative rounded-[4px] shrink-0">
+                              <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
+                                <p className="leading-[18px]">{count}</p>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                    <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-[#e2e8f0] text-[13px] text-center tracking-[0.13px] whitespace-nowrap">
-                      <p className="leading-[16px]">Clear Logs</p>
-                    </div>
-                  </button>
+                  </div>
                 </div>
               </div>
 
               <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col items-start overflow-clip relative rounded-[12px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] shrink-0 w-full">
+                <div className="max-h-[456px] overflow-y-auto w-full">
                 <table className="border-collapse w-full">
                   <colgroup>
                     <col style={{ width: "34%" }} />
@@ -671,7 +762,7 @@ export default function PDFConverter() {
                     <col style={{ width: "11%" }} />
                   </colgroup>
                   <thead>
-                    <tr className="bg-[#12151e] border-b border-[#2a3044] border-solid">
+                    <tr className="bg-[#12151e] border-b border-[#2a3044] border-solid sticky top-0 z-10">
                       <th className="text-left px-[17px] py-[19px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px]">FILE NAME</p>
@@ -709,11 +800,11 @@ export default function PDFConverter() {
                     </tr>
                   </thead>
                   <tbody>
-                    {conversionRows.map((row, i) => (
+                    {visibleRows.map((row, i) => (
                       <tr
                         key={row.id || row.name}
                         className={`border-[#1e2230] ${
-                          i === conversionRows.length - 1 ? "" : "border-b border-solid"
+                          i === visibleRows.length - 1 ? "" : "border-b border-solid"
                         }`}
                       >
                         <td className="px-[17px] py-[20px]">
@@ -778,6 +869,7 @@ export default function PDFConverter() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           </div>

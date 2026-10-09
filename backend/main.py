@@ -8,6 +8,7 @@ PATCH /api/sessions/{session_id}     rename a session
 POST /api/upload                     upload a single PDF (pdf-only, size-limited)
 POST /api/convert                    convert a document (docx/csv/html/xlsx/txt/pptx/md) to PDF
 GET  /api/convert/{id}/download      download a converted PDF
+GET  /api/conversions                list saved conversions (newest first)
 
 Run with:
     uvicorn main:app --reload --port 8000
@@ -15,6 +16,7 @@ Run with:
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,7 +64,37 @@ app.add_middleware(
 # In-memory stores (swap for a database later).
 SESSIONS: dict[str, dict] = {}
 UPLOADS: dict[str, dict] = {}
-CONVERSIONS: dict[str, dict] = {}
+
+# Conversions are persisted to a small JSON file so the Recent Conversions
+# table survives backend restarts (no external database required).
+CONVERSIONS_FILE = BASE_DIR / "conversions.json"
+
+
+def _load_conversions() -> dict[str, dict]:
+    if not CONVERSIONS_FILE.exists():
+        return {}
+    try:
+        raw = json.loads(CONVERSIONS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if isinstance(raw, dict):
+        return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
+    if isinstance(raw, list):
+        return {str(item.get("id")): item for item in raw if isinstance(item, dict) and item.get("id")}
+    return {}
+
+
+def _save_conversions() -> None:
+    try:
+        CONVERSIONS_FILE.write_text(
+            json.dumps(CONVERSIONS, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+CONVERSIONS: dict[str, dict] = _load_conversions()
 
 
 class SessionCreate(BaseModel):
@@ -161,7 +193,18 @@ async def convert_file(
         "created_at": _now(),
     }
     CONVERSIONS[conversion_id] = record
+    _save_conversions()
     return record
+
+
+@app.get("/api/conversions")
+def list_conversions() -> dict:
+    items = sorted(
+        CONVERSIONS.values(),
+        key=lambda r: r.get("created_at", ""),
+        reverse=True,
+    )
+    return {"conversions": items}
 
 
 @app.get("/api/convert/{conversion_id}/download")

@@ -47,6 +47,13 @@ export async function convertFile(file, folder) {
   return res.json();
 }
 
+export async function listConversions() {
+  const res = await fetch(`${API_BASE}/conversions`);
+  if (!res.ok) throw new Error(await readError(res));
+  const data = await res.json();
+  return Array.isArray(data.conversions) ? data.conversions : [];
+}
+
 export function conversionDownloadUrl(downloadUrl) {
   if (!downloadUrl) return null;
   if (/^https?:\/\//.test(downloadUrl)) return downloadUrl;
