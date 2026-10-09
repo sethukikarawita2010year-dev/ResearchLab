@@ -37,3 +37,25 @@ export async function uploadPdf(file) {
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }
+
+export async function convertFile(file, folder) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("folder", folder || "All Papers");
+  const res = await fetch(`${API_BASE}/convert`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export function conversionDownloadUrl(downloadUrl) {
+  if (!downloadUrl) return null;
+  if (/^https?:\/\//.test(downloadUrl)) return downloadUrl;
+
+  const base = API_BASE.replace(/\/$/, "");
+  const path = downloadUrl.startsWith("/") ? downloadUrl : `/${downloadUrl}`;
+
+  // Guard against a `download_url` that already includes the API prefix.
+  if (base.endsWith("/api") && path.startsWith("/api/")) return path;
+
+  return `${base}${path}`;
+}
