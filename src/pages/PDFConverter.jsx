@@ -877,7 +877,7 @@ export default function PDFConverter() {
       </div>
 
       {showFormatWarning && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60">
           <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[360px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]">
             <div className="flex items-start justify-between w-full">
               <div className="flex gap-[10px] items-center">
@@ -909,7 +909,7 @@ export default function PDFConverter() {
       )}
 
       {conversionError && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60">
           <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[360px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]">
             <div className="flex items-start justify-between w-full">
               <div className="flex gap-[10px] items-center">
