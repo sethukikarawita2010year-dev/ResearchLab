@@ -7,7 +7,7 @@ const formats = [".docx", ".csv", ".html", ".xlsx", ".txt", ".pptx", ".md"];
 const engineOptions = [
   {
     title: "Make text searchable",
-    desc: "Run OCR so you can highlight, copy, and search words inside the PDF.",
+    desc: "Ability to highlight, copy, and search words inside the PDF.",
   },
   {
     title: "Keep tables intact",
@@ -94,7 +94,7 @@ function EngineOption({ option, checked, onToggle }) {
 
 export default function PDFConverter() {
   const [checked, setChecked] = useState([true, true, false]);
-  const [showSettings, setShowSettings] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(true);
 
   const toggle = (i) =>
     setChecked((prev) => prev.map((v, idx) => (idx === i ? !v : v)));
@@ -119,61 +119,45 @@ export default function PDFConverter() {
                 </div>
                 <div className="flex flex-col items-start pb-[0.625px] relative shrink-0 w-full">
                   <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[14px] whitespace-nowrap">
-                    <p className="leading-[22.75px] mb-0">Convert raw research documents, datasets, presentation decks, and notes to clean, searchable</p>
-                    <p className="leading-[22.75px]">research-ready PDFs with automated OCR and vector embeddings.</p>
+                    <p className="leading-[22.75px] mb-0">Convert raw research documents, datasets, presentation decks, and notes to clean, searchable research-ready PDFs</p>
                   </div>
                 </div>
               </div>
               <div className="relative shrink-0">
                 <button
                   type="button"
-                  onClick={() => setShowSettings((v) => !v)}
-                  aria-expanded={showSettings}
-                  className="bg-[#161922] border border-[#2a3044] border-solid flex items-center justify-center rounded-[12px] shrink-0 size-[44px] cursor-pointer"
+                  onClick={() => setIsSettingsOpen((v) => !v)}
+                  aria-label={isSettingsOpen ? "Close converter settings" : "Open converter settings"}
+                  aria-expanded={isSettingsOpen}
+                  className="bg-[#161922] border border-[#2a3044] border-solid flex items-center justify-center rounded-[12px] shrink-0 size-[50px] cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6366f1]"
                 >
-                  <div className="relative shrink-0 size-[15px]">
+                  <div className="relative shrink-0 size-[20px]">
                     <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-settings.svg`} />
                   </div>
                 </button>
-                {showSettings && (
-                  <div className="absolute right-[44px] top-0 z-50 bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex flex-col items-start p-[17px] pr-[50px] rounded-[12px] w-[360px]">
-                    <div className="flex items-center justify-between relative w-full">
-                      <div className="flex gap-[4px] items-center relative shrink-0">
-                        <div className="relative shrink-0 size-[15px]">
-                          <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-settings.svg`} />
-                        </div>
-                        <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[18px] text-white tracking-[-0.18px] whitespace-nowrap">
-                          <p className="leading-[15px]">Converter Settings</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowSettings(false)}
-                        className="bg-[#11141d] border border-[#1e2230] border-solid flex items-center justify-center p-px relative rounded-[8px] shrink-0 size-[28px] cursor-pointer"
-                      >
-                        <div className="h-[5.55px] relative shrink-0 w-[9px] -rotate-90">
-                          <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-chevron.svg`} />
-                        </div>
-                      </button>
-                    </div>
-                    <div className="flex flex-col gap-[12px] items-start pt-[16px] relative w-full">
-                      {engineOptions.map((option, i) => (
-                        <EngineOption
-                          key={option.title}
-                          option={option}
-                          checked={checked[i]}
-                          onToggle={() => toggle(i)}
-                        />
-                      ))}
-                    </div>
+                <div
+                  aria-hidden={!isSettingsOpen}
+                  className={`absolute right-[68px] top-0 z-50 bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex flex-col items-start p-[17px] pr-[50px] rounded-[12px] w-[360px] max-w-[80vw] transition-all duration-300 ease-in-out motion-reduce:transition-none ${
+                    isSettingsOpen ? "translate-x-0 opacity-100" : "translate-x-[40px] opacity-0 pointer-events-none"
+                  }`}
+                >
+                  <div className="flex flex-col gap-[12px] items-start relative w-full">
+                    {engineOptions.map((option, i) => (
+                      <EngineOption
+                        key={option.title}
+                        option={option}
+                        checked={checked[i]}
+                        onToggle={() => toggle(i)}
+                      />
+                    ))}
                   </div>
-                )}
+                </div>
               </div>
             </div>
 
-            <div className="flex flex-col gap-[24px] px-[110px] pb-[32px] relative shrink-0 w-full">
+            <div className="flex flex-col gap-[24px] px-[110px] pb-[40px] relative shrink-0 w-full">
               <div className="flex flex-col gap-[24px] items-start self-start relative w-full">
-                <div className="bg-[#161922] border-2 border-[#2a3044] border-dashed flex flex-col items-start overflow-clip p-[34px] px-[50px] relative rounded-[12px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] shrink-0 w-full">
+                <div className="bg-[#161922] border-2 border-[#2a3044] border-dashed flex flex-col items-start overflow-clip p-[34px] px-[50px] relative rounded-[12px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] shrink-0 w-[calc(100%-200px)] mx-auto">
                   <div className="absolute bg-[rgba(99,102,241,0.1)] blur-[32px] right-[-64px] rounded-[9999px] size-[224px] top-[-64px]" />
                   <div className="relative shrink-0 w-full">
                     <div className="flex flex-col items-center px-[12px] py-[16px] relative w-full">
@@ -190,7 +174,7 @@ export default function PDFConverter() {
                       <div className="flex flex-col items-start max-w-[384px] pt-[4px] relative shrink-0">
                         <div className="flex flex-col items-center max-w-[384px] relative shrink-0">
                           <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
-                            <p className="leading-[18px]">or browse local drive (Max file size: 100MB)</p>
+                            <p className="leading-[18px]">Max file size: 100MB</p>
                           </div>
                         </div>
                       </div>
@@ -375,13 +359,13 @@ export default function PDFConverter() {
                           <p className="leading-[14px]">DATE</p>
                         </div>
                       </th>
-                      <th className="text-left px-[11px] py-[12px]">
+                      <th className="text-left pl-[21px] pr-[11px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">FOLDER</p>
                           <p className="leading-[14px]">DESTINATION</p>
                         </div>
                       </th>
-                      <th className="text-right px-[17px] py-[19px]">
+                      <th className="text-right px-[17px] py-[19px] align-middle">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px]">ACTIONS</p>
                         </div>
@@ -430,7 +414,7 @@ export default function PDFConverter() {
                             <p className="leading-[18px]">{row.date}</p>
                           </div>
                         </td>
-                        <td className="px-[11px] py-[20px]">
+                        <td className="pl-[21px] pr-[11px] py-[20px]">
                           <div className="bg-[#222738] border border-[#2a3044] border-solid inline-flex gap-[4px] items-center px-[9px] py-[5px] relative rounded-[9999px]">
                             <div className="h-[9.333px] relative shrink-0 w-[11.667px]">
                               <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-folder-small.svg`} />
@@ -440,15 +424,15 @@ export default function PDFConverter() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-[17px] py-[20px]">
+                        <td className="align-middle px-[17px] py-[20px]">
                           <div className="flex gap-[5px] items-center justify-end">
-                            <button type="button" className="flex flex-col items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
-                              <div className="relative shrink-0 size-[12px]">
+                            <button type="button" className="flex items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
+                              <div className="relative shrink-0 size-[15px]">
                                 <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-action.svg`} />
                               </div>
                             </button>
-                            <button type="button" className="flex flex-col items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
-                              <div className="relative shrink-0 size-[12px]">
+                            <button type="button" className="flex items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
+                              <div className="relative shrink-0 size-[15px]">
                                 <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-chat.svg`} />
                               </div>
                             </button>
