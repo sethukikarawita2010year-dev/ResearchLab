@@ -3,6 +3,10 @@
 Endpoints
 ---------
 GET  /api/health                     liveness probe
+POST /api/auth/signup                create an account
+POST /api/auth/login                 start a session (httpOnly cookie)
+POST /api/auth/logout                clear the session cookie
+GET  /api/auth/me                    the signed-in user, or 401
 POST /api/sessions                   create a research session (title)
 PATCH /api/sessions/{session_id}     rename a session
 POST /api/upload                     upload a single PDF (pdf-only, size-limited)
@@ -37,6 +41,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from conversion import ConversionError, convert_to_pdf
+from auth import router as auth_router
 import llm
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -71,6 +76,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 # In-memory stores (swap for a database later).
 SESSIONS: dict[str, dict] = {}

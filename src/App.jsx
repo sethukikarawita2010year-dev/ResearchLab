@@ -7,23 +7,32 @@ import Register from "./pages/Register";
 import Shell from "./components/Shell";
 import { PdfSlideProvider } from "./components/PdfSlide";
 import { SidebarProvider } from "./components/sidebarContext";
+import { AuthProvider } from "./components/AuthProvider";
+import RequireAuth from "./components/RequireAuth";
 
 export default function App() {
   return (
-    <PdfSlideProvider>
-      <SidebarProvider>
-        <Routes>
-          <Route element={<Shell />}>
-            <Route path="/" element={<Workspace />} />
-            <Route path="/library" element={<Workspace />} />
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/reader" element={<Reader />} />
-          </Route>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </SidebarProvider>
-    </PdfSlideProvider>
+    <AuthProvider>
+      <PdfSlideProvider>
+        <SidebarProvider>
+          <Routes>
+            <Route path="/" element={<Login />} />
+            <Route path="/signup" element={<Register />} />
+
+            <Route element={<RequireAuth />}>
+              <Route element={<Shell />}>
+                <Route path="/library" element={<Workspace />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/reader" element={<Reader />} />
+              </Route>
+            </Route>
+
+            <Route path="/login" element={<Navigate to="/" replace />} />
+            <Route path="/register" element={<Navigate to="/signup" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </SidebarProvider>
+      </PdfSlideProvider>
+    </AuthProvider>
   );
 }

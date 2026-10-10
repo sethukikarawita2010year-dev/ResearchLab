@@ -6,3 +6,6 @@ __pycache__/
 .venv/
 .env
 uploads.json
+sources.json
+researchlab.db
+researchlab.db-journal
