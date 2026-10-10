@@ -549,6 +549,10 @@ def chat_answer(
             "document; cite it as [p. PAGE \u00A7SECTION]. For claims taken from another "
             "attached document, include its filename in the bracket, e.g. "
             "[p. 4 \u00A73 - other.pdf].\n"
+            "If the user's question could apply to more than one of these papers and it "
+            "is not clear which one they mean, briefly ask them to specify which paper "
+            "they are referring to before answering. Otherwise answer using every "
+            "relevant paper (and say which paper each point comes from).\n"
         )
 
     system_instruction = (

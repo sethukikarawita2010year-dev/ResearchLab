@@ -293,7 +293,7 @@ export default function Workspace() {
         </div>
       </div>
 
-      <Composer destination={selectedFolder} />
+      <Composer destination={selectedFolder} sessionTitle={sessionTitle} />
     </div>
   );
 }

@@ -1,7 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { convertFile, conversionDownloadUrl, listConversions } from "../lib/api";
 import { useFolders } from "../lib/folderStore";
+import { useSessions } from "../lib/sessionStore";
+import { setPendingAttachment } from "../lib/pendingAttachment";
 import { useSidebar } from "../components/sidebarContext";
+import { usePdfSlide } from "../components/PdfSlide";
 
 const A = "/assets";
 
@@ -64,6 +68,8 @@ const rowFromRecord = (rec) => {
     date: formatConversionDate(rec.created_at),
     ts: Date.parse(rec.created_at) || Date.now(),
     folder: rec.folder,
+    downloadUrl: rec.download_url,
+    pdfFilename: rec.pdf_filename,
   };
 };
 
@@ -116,7 +122,10 @@ const initialConversions = [
 
 export default function PDFConverter() {
   const folders = useFolders();
+  const sessions = useSessions();
+  const navigate = useNavigate();
   const { collapsed } = useSidebar();
+  const { close: closeSlide } = usePdfSlide();
   const [selectedFormat, setSelectedFormat] = useState(null);
   const [showFormatWarning, setShowFormatWarning] = useState(false);
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -131,6 +140,7 @@ export default function PDFConverter() {
   const [conversionRows, setConversionRows] = useState(initialConversions);
   const [filterMode, setFilterMode] = useState("Newest");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [transfer, setTransfer] = useState({ open: false, row: null, folder: null });
   const fileInputRef = useRef(null);
   const folderTriggerRef = useRef(null);
   const folderPopupRef = useRef(null);
@@ -193,6 +203,7 @@ export default function PDFConverter() {
       setProgress(100);
       setConvertedPdf(record);
       setIsConverted(true);
+      setConversionRows((prev) => [rowFromRecord(record), ...prev]);
     } catch (err) {
       stopProgressTimer();
       setConversionError(err.message || "Conversion failed.");
@@ -201,29 +212,60 @@ export default function PDFConverter() {
     }
   };
 
-  const handleDownload = async () => {
-    if (!convertedPdf) return;
+  const downloadRecord = async (downloadUrl, filename) => {
+    if (!downloadUrl) return;
     try {
-      const url = conversionDownloadUrl(convertedPdf.download_url);
+      const url = conversionDownloadUrl(downloadUrl);
       const res = await fetch(url);
       if (!res.ok) throw new Error("Download failed.");
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = convertedPdf.pdf_filename || "document.pdf";
+      link.download = filename || "document.pdf";
       document.body.appendChild(link);
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-
-      if (!downloadedRef.current) {
-        downloadedRef.current = true;
-        setConversionRows((prev) => [rowFromRecord(convertedPdf), ...prev]);
-      }
     } catch (err) {
       setConversionError(err.message || "Download failed.");
     }
+  };
+
+  const handleDownload = () => {
+    if (!convertedPdf) return;
+    downloadRecord(convertedPdf.download_url, convertedPdf.pdf_filename);
+  };
+
+  const openTransfer = (row) => setTransfer({ open: true, row, folder: null });
+  const closeTransfer = () => setTransfer({ open: false, row: null, folder: null });
+
+  const selectTransferChat = async (session) => {
+    const row = transfer.row;
+    try {
+      if (row?.downloadUrl) {
+        const url = conversionDownloadUrl(row.downloadUrl);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Could not load the converted PDF.");
+        const blob = await res.blob();
+        const filename = row.pdfFilename || row.name || "document.pdf";
+        setPendingAttachment(session.id, new File([blob], filename, { type: "application/pdf" }));
+      }
+    } catch (err) {
+      setConversionError(err.message || "Could not attach the converted PDF.");
+      closeTransfer();
+      return;
+    }
+    closeTransfer();
+    closeSlide();
+    navigate("/chat", {
+      state: {
+        sessionId: session.id,
+        uploadId: session.id,
+        pdfName: session.pdfName,
+        title: session.title,
+      },
+    });
   };
 
   useEffect(() => {
@@ -649,7 +691,7 @@ export default function PDFConverter() {
                               </div>
                             </div>
                           </button>
-                          <button type="button" className="bg-[#1e2230] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex gap-[4px] items-center justify-center px-[13px] py-[11px] relative rounded-[8px] shrink-0 cursor-pointer">
+                          <button type="button" onClick={() => openTransfer({ downloadUrl: convertedPdf.download_url, pdfFilename: convertedPdf.pdf_filename, name: convertedPdf.pdf_filename })} className="bg-[#1e2230] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex gap-[4px] items-center justify-center px-[13px] py-[11px] relative rounded-[8px] shrink-0 cursor-pointer">
                             <div className="flex flex-col items-center pl-[3px] pr-[3px] relative shrink-0">
                               <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-[#e2e8f0] text-[13px] text-center tracking-[0.13px] whitespace-nowrap">
                                 <p className="leading-[16px] mb-0">Open in Workspace</p>
@@ -856,12 +898,24 @@ export default function PDFConverter() {
                         </td>
                         <td className="align-middle px-[17px] py-[20px]">
                           <div className="flex gap-[5px] items-center justify-end">
-                            <button type="button" className="flex items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
+                            <button
+                              type="button"
+                              aria-label={`Download ${row.name}`}
+                              title="Download converted PDF"
+                              onClick={() => downloadRecord(row.downloadUrl, row.pdfFilename || row.name)}
+                              className="flex items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer hover:bg-[#1b202e] transition-colors"
+                            >
                               <div className="relative shrink-0 size-[15px]">
                                 <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-action.svg`} />
                               </div>
                             </button>
-                            <button type="button" className="flex items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer">
+                            <button
+                              type="button"
+                              aria-label={`Transfer ${row.name} to a workspace chat`}
+                              title="Transfer to workspace chat"
+                              onClick={() => openTransfer(row)}
+                              className="flex items-center justify-center p-[4px] relative rounded-[4px] shrink-0 cursor-pointer hover:bg-[#1b202e] transition-colors"
+                            >
                               <div className="relative shrink-0 size-[15px]">
                                 <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-chat.svg`} />
                               </div>
@@ -878,6 +932,102 @@ export default function PDFConverter() {
           </div>
         </div>
       </div>
+
+      {transfer.open && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60" onClick={closeTransfer}>
+          <div
+            className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[420px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between w-full">
+              <div className="flex gap-[10px] items-center">
+                <div className="bg-[rgba(30,27,75,0.6)] border border-[rgba(67,56,202,0.4)] border-solid flex items-center justify-center rounded-[8px] shrink-0 size-[34px]">
+                  <div className="relative shrink-0 size-[15px]">
+                    <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-chat.svg`} />
+                  </div>
+                </div>
+                <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[16px] text-white tracking-[-0.16px]">
+                  <p className="leading-[24px]">
+                    {transfer.folder ? "Choose a chat" : "Choose a folder"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeTransfer}
+                aria-label="Close"
+                className="flex items-center justify-center p-[4px] relative rounded-[6px] shrink-0 cursor-pointer hover:bg-[#1b202e]"
+              >
+                <div className="relative shrink-0 size-[12px]">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/chat-panel-close.svg`} />
+                </div>
+              </button>
+            </div>
+
+            {!transfer.folder ? (
+              <div className="flex flex-col gap-[4px] w-full max-h-[280px] overflow-y-auto no-scrollbar">
+                {folders.map((f) => (
+                  <button
+                    key={f.name}
+                    type="button"
+                    onClick={() => setTransfer((prev) => ({ ...prev, folder: f.name }))}
+                    className="content-stretch flex items-center justify-between px-[10px] py-[8px] relative rounded-[8px] w-full cursor-pointer hover:bg-[#1b202e] transition-colors"
+                  >
+                    <div className="flex gap-[8px] items-center">
+                      <div className="relative h-[10.667px] w-[13.333px] shrink-0">
+                        <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-folder-white.svg`} />
+                      </div>
+                      <span className="font-inter text-[13px] text-[#cbd5e1]">{f.name}</span>
+                    </div>
+                    <span className="bg-[#1b202e] border border-[#2a3044] border-solid rounded-[4px] px-[5px] py-[3px] font-inter text-[13px] text-[#94a3b8]">
+                      {f.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setTransfer((prev) => ({ ...prev, folder: null }))}
+                  className="flex items-center gap-[6px] font-inter text-[12px] text-[#a5b4fc] cursor-pointer hover:text-[#c7d2fe] transition-colors"
+                >
+                  ← Back to folders
+                </button>
+                <div className="flex flex-col gap-[4px] w-full max-h-[280px] overflow-y-auto no-scrollbar">
+                  {(transfer.folder === "All Papers"
+                    ? sessions
+                    : sessions.filter((s) => s.folder === transfer.folder)
+                  ).length ? (
+                    (transfer.folder === "All Papers"
+                      ? sessions
+                      : sessions.filter((s) => s.folder === transfer.folder)
+                    ).map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => selectTransferChat(s)}
+                        className="content-stretch flex items-center gap-[8px] px-[10px] py-[8px] relative rounded-[8px] w-full text-left cursor-pointer hover:bg-[#1b202e] transition-colors"
+                      >
+                        <div className="relative shrink-0 size-[15px]">
+                          <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/chat-doc.svg`} />
+                        </div>
+                        <span className="font-inter text-[13px] text-[#cbd5e1] truncate">
+                          {s.title || s.pdfName || "Untitled"}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="font-inter text-[13px] text-[#94a3b8] leading-[20px]">
+                      No chats in this folder yet.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {showFormatWarning && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60">

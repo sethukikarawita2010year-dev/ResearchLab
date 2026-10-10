@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { usePdfAttachment, PdfFileInput, PdfChip } from "./PdfAttachment";
 import { uploadPdf } from "../lib/api";
 import { useSidebar } from "./sidebarContext";
+import { createSessionRecord } from "../lib/sessionStore";
+import { incrementFolderCount, incrementAllPapers } from "../lib/folderStore";
 
 const A = "/assets";
 
@@ -11,6 +13,7 @@ export default function Composer({
   showDestination = true,
   destination = "ML Papers",
   disabled = false,
+  sessionTitle = "",
 }) {
   const { collapsed } = useSidebar();
   const navigate = useNavigate();
@@ -44,11 +47,29 @@ export default function Composer({
     try {
       const uploaded = await uploadPdf(attached);
       const pdfName = uploaded.filename || attached.name;
+      const trimmedTitle = (sessionTitle || "").trim();
+      const title =
+        trimmedTitle && trimmedTitle !== "New research session" ? trimmedTitle : pdfName;
+      createSessionRecord({
+        id: uploaded.id,
+        title,
+        folder: destination,
+        pdfName,
+        prompt,
+        uploadId: uploaded.id,
+        messages: [],
+        extraDocs: [],
+        webSources: [],
+      });
+      incrementFolderCount(destination);
+      incrementAllPapers();
       sessionStorage.setItem("researchlab.pdfName", pdfName);
       sessionStorage.setItem("researchlab.uploadId", uploaded.id);
       sessionStorage.setItem("researchlab.prompt", prompt);
       clear();
-      navigate("/chat", { state: { prompt, uploadId: uploaded.id, pdfName } });
+      navigate("/chat", {
+        state: { sessionId: uploaded.id, prompt, uploadId: uploaded.id, pdfName, title },
+      });
     } catch (err) {
       setStatus(err.message || "Upload failed");
     } finally {

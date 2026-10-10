@@ -1,18 +1,12 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { createFolder, useFolders } from "../lib/folderStore";
+import { useSessions, updateSession, deleteSession } from "../lib/sessionStore";
 import { useSidebar } from "./sidebarContext";
 
 const A = "/assets";
 
 const historyGroups = [
-  {
-    label: "Today",
-    items: [
-      { title: "Attention Is All You Need (Cross-Attn)", to: "/chat", active: true },
-      { title: "Scaling Laws for Neural Language Models", to: "/chat" },
-    ],
-  },
   {
     label: "Yesterday",
     items: [
@@ -35,11 +29,14 @@ export default function Sidebar() {
   const [selectedFolder, setSelectedFolder] = useState("All Papers");
   const [selectedChat, setSelectedChat] = useState("");
   const folderList = useFolders();
+  const sessions = useSessions();
   const [isFolderPopupOpen, setIsFolderPopupOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [editingChatId, setEditingChatId] = useState("");
   const [editDraft, setEditDraft] = useState("");
   const [renamedTitles, setRenamedTitles] = useState({});
+  const [hiddenTitles, setHiddenTitles] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const { collapsed, toggle } = useSidebar();
   const folderHighlightRef = useRef(null);
   const folderRowsRef = useRef(null);
@@ -52,16 +49,59 @@ export default function Sidebar() {
     setIsFolderPopupOpen(false);
   };
 
-  const commitRename = (originalTitle) => {
+  const commitRename = (item) => {
     const next = editDraft.trim();
-    setRenamedTitles((prev) => {
-      const copy = { ...prev };
-      if (next) copy[originalTitle] = next;
-      else delete copy[originalTitle];
-      return copy;
-    });
+    if (item.sessionId) {
+      updateSession(item.sessionId, { title: next || item.title });
+    } else {
+      setRenamedTitles((prev) => {
+        const copy = { ...prev };
+        if (next) copy[item.originalTitle] = next;
+        else delete copy[item.originalTitle];
+        return copy;
+      });
+    }
     setEditingChatId("");
   };
+
+  const confirmDelete = () => {
+    const item = deleteTarget;
+    if (!item) return;
+    if (item.sessionId) {
+      deleteSession(item.sessionId);
+    } else {
+      setHiddenTitles((prev) => ({ ...prev, [item.originalTitle]: true }));
+    }
+    setDeleteTarget(null);
+  };
+
+  const todays = sessions.filter(
+    (s) => selectedFolder === "All Papers" || s.folder === selectedFolder,
+  );
+  const groups = [
+    {
+      label: "Today",
+      items: todays.map((s) => ({
+        key: `s-${s.id}`,
+        sessionId: s.id,
+        title: s.title || s.pdfName || "Untitled",
+        pdfName: s.pdfName,
+        folder: s.folder,
+        to: "/chat",
+      })),
+    },
+    ...historyGroups.map((g) => ({
+      label: g.label,
+      items: g.items
+        .filter((it) => !hiddenTitles[it.title])
+        .map((it) => ({
+          key: it.title,
+          originalTitle: it.title,
+          title: it.title,
+          to: it.to,
+        })),
+    })),
+  ].filter((g) => g.items.length > 0);
 
   useLayoutEffect(() => {
     if (isFolderPopupOpen && folderNameInputRef.current) {
@@ -257,7 +297,7 @@ export default function Sidebar() {
           </div>
 
           <div className="content-stretch flex flex-1 flex-col gap-[12px] items-start min-h-px overflow-auto no-scrollbar px-[16px] relative w-full">
-            {historyGroups.map((group) => (
+            {groups.map((group) => (
               <div
                 key={group.label}
                 className="content-stretch flex flex-col gap-[2px] items-start pt-[5.5px] relative shrink-0 w-full"
@@ -265,15 +305,27 @@ export default function Sidebar() {
                 <div className="flex flex-col font-inter font-extrabold justify-center relative shrink-0 text-[#c1cee0] text-[14.6px] tracking-[0.55px] uppercase whitespace-nowrap">
                   <p className="leading-[19.8px]">{group.label}</p>
                 </div>
-{group.items.map((item) => {
-                  const isSelected = item.title === selectedChat;
-                  const displayTitle = renamedTitles[item.title] || item.title;
-                  const isEditing = editingChatId === item.title;
+                {group.items.map((item) => {
+                  const isSelected = item.key === selectedChat;
+                  const displayTitle = item.sessionId
+                    ? item.title
+                    : renamedTitles[item.originalTitle] || item.title;
+                  const isEditing = editingChatId === item.key;
                   return (
                     <Link
-                      key={item.title}
+                      key={item.key}
                       to={item.to}
-                      onClick={() => setSelectedChat(item.title)}
+                      state={
+                        item.sessionId
+                          ? {
+                              sessionId: item.sessionId,
+                              uploadId: item.sessionId,
+                              pdfName: item.pdfName,
+                              title: item.title,
+                            }
+                          : undefined
+                      }
+                      onClick={() => setSelectedChat(item.key)}
                       className={`group content-stretch flex flex-col items-start overflow-clip px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full transition-colors ${
                         isSelected ? "bg-[#1b202e]" : "hover:bg-[#161922]"
                       }`}
@@ -286,7 +338,7 @@ export default function Sidebar() {
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
-                              commitRename(item.title);
+                              commitRename(item);
                             } else if (e.key === "Escape") {
                               e.preventDefault();
                               setEditingChatId("");
@@ -310,7 +362,7 @@ export default function Sidebar() {
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              setEditingChatId(item.title);
+                              setEditingChatId(item.key);
                               setEditDraft(displayTitle);
                             }}
                             className="flex items-center justify-center opacity-0 group-hover:opacity-100 p-[2px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#e2e8f0] transition-opacity"
@@ -327,6 +379,30 @@ export default function Sidebar() {
                               aria-hidden="true"
                             >
                               <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${displayTitle}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDeleteTarget(item);
+                            }}
+                            className="flex items-center justify-center opacity-0 group-hover:opacity-100 p-[2px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#f87171] transition-opacity"
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />
                             </svg>
                           </button>
                         </div>
@@ -382,6 +458,43 @@ export default function Sidebar() {
         </div>
       </div>
       </div>
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+          <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[360px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]">
+            <div className="flex gap-[10px] items-center">
+              <div className="bg-[rgba(69,26,26,0.6)] border border-[rgba(153,27,27,0.4)] border-solid flex items-center justify-center rounded-[8px] shrink-0 size-[34px]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />
+                </svg>
+              </div>
+              <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[16px] text-white tracking-[-0.16px]">
+                <p className="leading-[24px]">Delete this chat?</p>
+              </div>
+            </div>
+            <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px]">
+              <p className="leading-[20px]">
+                This deletes “{deleteTarget.title}” and its notes. This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-[8px] w-full">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="bg-[#1a1e2b] border border-[#2a3044] border-solid rounded-[8px] flex-1 py-[8px] font-inter font-medium text-[13px] text-[#cbd5e1] cursor-pointer hover:bg-[#20263a] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                className="bg-[#dc2626] border border-[#dc2626] border-solid rounded-[8px] flex-1 py-[8px] font-inter font-medium text-[13px] text-white cursor-pointer hover:bg-[#b91c1c] transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

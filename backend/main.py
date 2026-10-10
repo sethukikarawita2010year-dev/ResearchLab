@@ -11,6 +11,7 @@ GET  /api/convert/{id}/download      download a converted PDF
 GET  /api/conversions                list saved conversions (newest first)
 POST /api/analyze                    produce the five-section structured summary via Gemini
 POST /api/chat                       grounded Q&A over an uploaded PDF (optional web search)
+POST /api/resolve-source             fetch a web URL and return its title/host as a source
 
 Run with:
     uvicorn main:app --reload --port 8000
@@ -18,10 +19,14 @@ Run with:
 
 from __future__ import annotations
 
+import html as html_lib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -125,6 +130,25 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     web_search: bool = True
     language: str = Field(default="auto")
+
+
+class ResolveSourceRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+def _extract_title(markup: str) -> str:
+    for pattern in (
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
+        r"<title[^>]*>(.*?)</title>",
+    ):
+        match = re.search(pattern, markup, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            title = html_lib.unescape(match.group(1)).strip()
+            title = re.sub(r"\s+", " ", title)
+            if title:
+                return title[:300]
+    return ""
 
 
 def _now() -> str:
@@ -266,11 +290,18 @@ def chat(payload: ChatRequest) -> dict:
     docs: list[dict] = []
     seen: set[str] = set()
 
-    def add_doc(doc_id: str) -> None:
+    def add_doc(doc_id: str, required: bool = False) -> None:
         if doc_id in seen:
             return
         seen.add(doc_id)
-        doc_path = _resolve_upload(doc_id)
+        try:
+            doc_path = _resolve_upload(doc_id)
+        except HTTPException:
+            # A stale/unavailable secondary document should not fail the whole
+            # turn; only the primary document is mandatory.
+            if required:
+                raise
+            return
         record = UPLOADS.get(doc_id, {})
         docs.append(
             {
@@ -280,7 +311,7 @@ def chat(payload: ChatRequest) -> dict:
             }
         )
 
-    add_doc(payload.document_id)
+    add_doc(payload.document_id, required=True)
     for extra_id in payload.document_ids:
         if extra_id != payload.document_id:
             add_doc(extra_id)
@@ -300,6 +331,34 @@ def chat(payload: ChatRequest) -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI chat failed: {exc}") from exc
+
+
+@app.post("/api/resolve-source")
+def resolve_source(payload: ResolveSourceRequest) -> dict:
+    url = payload.url.strip()
+    if url and not url.lower().startswith(("http://", "https://")):
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Enter a valid http(s) URL.")
+
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ResearchLab/1.0; +https://researchlab.local)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    try:
+        with urlopen(request, timeout=12) as response:  # noqa: S310 - user-provided research URL
+            raw = response.read(300_000)
+            charset = response.headers.get_content_charset() or "utf-8"
+        markup = raw.decode(charset, errors="replace")
+    except Exception as exc:  # noqa: BLE001 - surface any fetch failure to the client
+        raise HTTPException(status_code=502, detail=f"Could not reach that URL: {exc}") from exc
+
+    title = _extract_title(markup) or parsed.netloc
+    return {"url": url, "title": title, "host": parsed.netloc}
 
 
 if __name__ == "__main__":

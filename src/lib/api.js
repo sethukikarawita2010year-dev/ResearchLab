@@ -88,6 +88,16 @@ export async function chatMessage({
   return res.json();
 }
 
+export async function resolveSource({ url }) {
+  const res = await fetch(`${API_BASE}/resolve-source`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
 export function conversionDownloadUrl(downloadUrl) {
   if (!downloadUrl) return null;
   if (/^https?:\/\//.test(downloadUrl)) return downloadUrl;

@@ -2,8 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { usePdfAttachment, PdfFileInput, PdfChip } from "../components/PdfAttachment";
 import RichText from "../components/RichText";
-import { analyzePaper, chatMessage, uploadPdf } from "../lib/api";
+import { analyzePaper, chatMessage, uploadPdf, resolveSource } from "../lib/api";
 import { useSidebar } from "../components/sidebarContext";
+import {
+  createSessionRecord,
+  getSession,
+  updateSession,
+  useSessions,
+} from "../lib/sessionStore";
+import { takePendingAttachment } from "../lib/pendingAttachment";
 
 const A = "/assets";
 
@@ -28,6 +35,20 @@ function hostOf(url) {
   } catch {
     return url;
   }
+}
+
+const WEB_OFF =
+  /\b(?:no|not|don'?t|do\s+not|never|without|avoid|skip|disable|stop|exclude|turn\s+off)\b[^.!?\n]{0,24}\b(?:web|internet|online|google|search|searching|browsing)\b|\boffline\b|\b(?:only|just|stick\s+to|limit\s+to|solely|exclusively)\b[^.!?\n]{0,24}\b(?:pdf|pdfs|paper|papers|document|documents|uploaded)\b|\b(?:pdf|pdfs|paper|papers|document|documents)\b[^.!?\n]{0,12}\b(?:only|alone)\b/i;
+
+const WEB_ON =
+  /\b(?:use|using|with|search|searches|searching|look|looking|check|checking|browse|browsing|find|finding|via|include|including|add|adding|consult|consulting|see)\b[^.!?\n]{0,24}\b(?:the\s+)?(?:web|internet|online|google)\b|\b(?:web|internet|online|google)\s+(?:search|searches|searching|sources?|results?|data|info|information)\b|\b(?:latest|recent|current|up[- ]to[- ]date)\b[^.!?\n]{0,20}\b(?:research|papers?|news|info|information|data|developments?|results?|sources?)\b/i;
+
+function detectWebIntent(text) {
+  const t = String(text || "").toLowerCase();
+  if (!t.trim()) return null;
+  if (WEB_OFF.test(t)) return false;
+  if (WEB_ON.test(t)) return true;
+  return null;
 }
 
 function Stripper(text) {
@@ -94,6 +115,15 @@ function RestoreIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="8" y="8" width="11" height="11" rx="2" />
       <path d="M5 16V6a2 2 0 0 1 2-2h8" />
+    </svg>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 17v5" />
+      <path d="M9 10.76V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v5.76a1 1 0 0 0 .3.7l1.55 1.56a1 1 0 0 1 .29.7V16a1 1 0 0 1-1 1H7.86a1 1 0 0 1-1-1v-1.58a1 1 0 0 1 .3-.7l1.54-1.56a1 1 0 0 0 .3-.7Z" />
     </svg>
   );
 }
@@ -397,8 +427,20 @@ function EmptyState({ pdfName }) {
 export default function Chat() {
   const { collapsed } = useSidebar();
   const location = useLocation();
+  const sessions = useSessions();
   const [documentId, setDocumentId] = useState(
-    () => location.state?.uploadId || sessionStorage.getItem("researchlab.uploadId") || null,
+    () =>
+      location.state?.uploadId ||
+      location.state?.sessionId ||
+      sessionStorage.getItem("researchlab.uploadId") ||
+      null,
+  );
+  const [sessionId, setSessionId] = useState(
+    () =>
+      location.state?.sessionId ||
+      location.state?.uploadId ||
+      sessionStorage.getItem("researchlab.uploadId") ||
+      null,
   );
   const [pdfName, setPdfName] = useState(
     () =>
@@ -417,15 +459,24 @@ export default function Chat() {
   const [notesMaximized, setNotesMaximized] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [toast, setToast] = useState(null);
-  const [extraDocs, setExtraDocs] = useState(() => {
-    try {
-      const arr = JSON.parse(sessionStorage.getItem("researchlab.extraDocs") || "[]");
-      return Array.isArray(arr) ? arr.filter((d) => d && d.id) : [];
-    } catch {
-      return [];
-    }
-  });
-  const noteKey = documentId ? `researchlab.notepad.${documentId}` : null;
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [extraDocs, setExtraDocs] = useState([]);
+  const [webSources, setWebSources] = useState([]);
+  const [addSourceOpen, setAddSourceOpen] = useState(false);
+  const [addSourceMode, setAddSourceMode] = useState("menu");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceBusy, setSourceBusy] = useState(false);
+  const [sourceError, setSourceError] = useState("");
+  const sourceInputRef = useRef(null);
+  const sessionIdRef = useRef(sessionId);
+  const noteKey = sessionId ? `researchlab.notepad.${sessionId}` : null;
+
+  const currentSession = useMemo(
+    () => sessions.find((s) => s.id === sessionId) || null,
+    [sessions, sessionId],
+  );
+  const headerTitle = currentSession?.title || pdfName;
+
   const {
     file,
     error,
@@ -433,7 +484,12 @@ export default function Chat() {
     open: openPdf,
     onChange: onPdfChange,
     clear: clearPdf,
+    attach: attachPdf,
   } = usePdfAttachment();
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   const messagesRef = useRef(messages);
   useEffect(() => {
@@ -503,7 +559,7 @@ export default function Chat() {
       const res = await chatMessage({
         documentId: docId,
         documentIds: finalIds,
-        chatId: docId,
+        chatId: sessionIdRef.current || docId,
         messages: history,
         webSearch: webSearchRef.current,
       });
@@ -514,26 +570,106 @@ export default function Chat() {
     setBusy("idle");
   };
 
-  useEffect(() => {
-    if (startedRef.current) return;
-    const state = location.state || {};
-    const prompt = (state.prompt || sessionStorage.getItem("researchlab.prompt") || "").trim();
-    const docId = state.uploadId || sessionStorage.getItem("researchlab.uploadId");
-    const name =
-      state.pdfName || sessionStorage.getItem("researchlab.pdfName") || "document.pdf";
-    if (!docId) return;
+  const hydrate = (sid, state) => {
+    sessionIdRef.current = sid;
+    setSessionId(sid);
     startedRef.current = true;
-    setDocumentId(docId);
+    const rec = getSession(sid);
+    const name =
+      rec?.pdfName ||
+      state.pdfName ||
+      sessionStorage.getItem("researchlab.pdfName") ||
+      "document.pdf";
+    setDocumentId(rec?.uploadId || sid);
     setPdfName(name);
-    const userMsg = { id: uid(), role: "user", kind: "text", content: prompt, pdfName: name, time: nowLabel() };
+
+    if (rec && Array.isArray(rec.messages) && rec.messages.length) {
+      setMessages(rec.messages);
+      messagesRef.current = rec.messages;
+      setExtraDocs(Array.isArray(rec.extraDocs) ? rec.extraDocs : []);
+      setWebSources(Array.isArray(rec.webSources) ? rec.webSources : []);
+      return;
+    }
+
+    const prompt = (
+      state.prompt ??
+      rec?.prompt ??
+      sessionStorage.getItem("researchlab.prompt") ??
+      ""
+    ).trim();
+    const userMsg = {
+      id: uid(),
+      role: "user",
+      kind: "text",
+      content: prompt,
+      pdfName: name,
+      time: nowLabel(),
+    };
     setMessages([userMsg]);
     messagesRef.current = [userMsg];
-    enqueue(() => runTurn(userMsg, docId));
+    setExtraDocs([]);
+    setWebSources([]);
+    if (!rec) {
+      createSessionRecord({
+        id: sid,
+        title: state.title || name,
+        pdfName: name,
+        prompt,
+        uploadId: sid,
+        messages: [],
+        extraDocs: [],
+        webSources: [],
+      });
+    }
+    enqueue(() => runTurn(userMsg, sid, [sid]));
+  };
+
+  useEffect(() => {
+    const state = location.state || {};
+    const sid =
+      state.sessionId || state.uploadId || sessionStorage.getItem("researchlab.uploadId") || null;
+    if (!sid) return;
+    const pending = takePendingAttachment(sid);
+    if (startedRef.current && sessionIdRef.current === sid) {
+      if (pending) attachPdf(pending);
+      return;
+    }
+    hydrate(sid, state);
+    if (pending) attachPdf(pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [location.key]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const existing = getSession(sessionId);
+    if (messages.length === 0 && existing && existing.messages && existing.messages.length) {
+      return;
+    }
+    updateSession(sessionId, { messages });
+  }, [messages, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    updateSession(sessionId, { extraDocs });
+  }, [extraDocs, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    updateSession(sessionId, { webSources });
+  }, [webSources, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !documentId) return;
+    updateSession(sessionId, { uploadId: documentId, pdfName });
+  }, [documentId, pdfName, sessionId]);
 
   const handleSend = async () => {
     const q = query.trim();
+    const intent = detectWebIntent(q);
+    if (intent !== null) {
+      webSearchRef.current = intent;
+      setWebSearch(intent);
+    }
     const attach = file;
     if (!q && !attach) {
       if (!documentId) setStatus("Attach a PDF to start a conversation.");
@@ -577,7 +713,7 @@ export default function Chat() {
     }
     setPdfName(name);
 
-    const userMsg = { id: uid(), role: "user", kind: "text", content: q, pdfName: name, time: nowLabel() };
+    const userMsg = { id: uid(), role: "user", kind: "text", content: q, pdfName: attach ? name : null, time: nowLabel() };
     addMsg(userMsg);
     enqueue(() => runTurn(userMsg, docId, docIdList, { newDoc: Boolean(attach) }));
   };
@@ -603,7 +739,7 @@ export default function Chat() {
     const prior = messagesRef.current.slice(0, index).filter((m) => m.role === "user");
     const prompt = prior.length ? prior[prior.length - 1].content || "" : "";
     const body = msg.kind === "summary" ? summaryToText(msg.sections) : msg.content;
-    const chunk = `#${prompt}\n${Stripper(body || "")}\n\n`;
+    const chunk = `# ${prompt}\n\n${Stripper(body || "")}\n\n`;
     setNoteText((prev) => (prev ? prev + chunk : chunk));
     notify("Added to the notepad!");
   };
@@ -651,15 +787,12 @@ export default function Chat() {
   }, [noteText, noteKey]);
 
   const exportNotes = () => {
-    const safe = (pdfName || "chat").replace(/[^A-Za-z0-9._ -]/g, "").trim() || "chat";
-    const d = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    const safe = (headerTitle || pdfName || "chat").replace(/[\\/:*?"<>|]/g, "").trim() || "chat";
     const blob = new Blob([`\uFEFF${noteText}`], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `ResearchLab-notes-${safe}-${stamp}.txt`;
+    link.download = `${safe}'s notes.txt`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -668,8 +801,6 @@ export default function Chat() {
   };
 
   const clearNotes = () => {
-    if (!noteText) return;
-    if (!window.confirm("Clear this chat's notepad?")) return;
     setNoteText("");
     if (noteKey) {
       try {
@@ -678,7 +809,75 @@ export default function Chat() {
         /* ignore */
       }
     }
+    setConfirmClearOpen(false);
     notify("Notepad cleared");
+  };
+
+  const openAddSource = () => {
+    setAddSourceMode("menu");
+    setSourceUrl("");
+    setSourceError("");
+    setAddSourceOpen(true);
+  };
+
+  const closeAddSource = () => {
+    setAddSourceOpen(false);
+    setAddSourceMode("menu");
+    setSourceUrl("");
+    setSourceError("");
+  };
+
+  const onSourceFile = async (event) => {
+    const picked = event.target.files?.[0];
+    event.target.value = "";
+    if (!picked) return;
+    setSourceBusy(true);
+    setSourceError("");
+    try {
+      const uploaded = await uploadPdf(picked);
+      const entry = { id: uploaded.id, name: uploaded.filename || picked.name };
+      setExtraDocs((prev) => {
+        const next = prev.some((d) => d.id === entry.id) ? prev : [...prev, entry];
+        try {
+          sessionStorage.setItem("researchlab.extraDocs", JSON.stringify(next));
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+      notify("Source added");
+      closeAddSource();
+    } catch (err) {
+      setSourceError(err.message || "Upload failed");
+    } finally {
+      setSourceBusy(false);
+    }
+  };
+
+  const addWebSource = async () => {
+    const raw = sourceUrl.trim();
+    if (!raw) return;
+    setSourceBusy(true);
+    setSourceError("");
+    try {
+      const info = await resolveSource({ url: raw });
+      const entry = { id: info.url, title: info.title || info.host, url: info.url };
+      setWebSources((prev) => {
+        const next = prev.some((s) => s.url === entry.url) ? prev : [...prev, entry];
+        try {
+          sessionStorage.setItem("researchlab.webSources", JSON.stringify(next));
+        } catch {
+          /* ignore */
+        }
+        return next;
+      });
+      notify("Source added");
+      closeAddSource();
+    } catch (err) {
+      setSourceError(err.message || "Could not identify that URL");
+    } finally {
+      setSourceBusy(false);
+    }
   };
 
   const sources = useMemo(() => {
@@ -700,6 +899,17 @@ export default function Chat() {
       });
     });
     const seen = new Set();
+    webSources.forEach((w) => {
+      if (seen.has(w.url)) return;
+      seen.add(w.url);
+      list.push({
+        key: w.url,
+        icon: `${A}/chat-globe.svg`,
+        title: w.title || hostOf(w.url),
+        badge: "WEB",
+        meta: w.url,
+      });
+    });
     messages.forEach((m) => {
       (m.citations || []).forEach((c) => {
         if (c.type === "web" && c.url && !seen.has(c.url)) {
@@ -715,14 +925,10 @@ export default function Chat() {
       });
     });
     return list;
-  }, [messages, documentId, pdfName, extraDocs]);
+  }, [messages, documentId, pdfName, extraDocs, webSources]);
 
   return (
-    <div
-      className={`content-stretch flex flex-col items-start relative size-full h-screen overflow-hidden transition-[padding] duration-200 ease-out ${
-        collapsed ? "pl-[130px]" : "pl-[260px]"
-      }`}
-    >
+    <div className="bg-[#0b0d13] relative h-screen w-full overflow-hidden">
       {copied && (
         <div className="pointer-events-none absolute left-1/2 top-[76px] -translate-x-1/2 w-max z-[60]">
           <div className="backdrop-blur-[12px] bg-[rgba(17,20,29,0.95)] border border-[#2a3044] border-solid content-stretch drop-shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.3),0px_4px_6px_-4px_rgba(0,0,0,0.3)] flex items-center gap-[8px] px-[14px] py-[9px] relative rounded-[10px]">
@@ -749,12 +955,54 @@ export default function Chat() {
           </div>
         </div>
       )}
+      {confirmClearOpen && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60">
+          <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[360px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]">
+            <div className="flex gap-[10px] items-center">
+              <div className="bg-[rgba(69,26,26,0.6)] border border-[rgba(153,27,27,0.4)] border-solid flex items-center justify-center rounded-[8px] shrink-0 size-[34px]">
+                <span className="text-[#f87171]">
+                  <TrashIcon />
+                </span>
+              </div>
+              <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[16px] text-white tracking-[-0.16px]">
+                <p className="leading-[24px]">Delete these notes?</p>
+              </div>
+            </div>
+            <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px]">
+              <p className="leading-[20px]">
+                This clears the notepad for this chat. This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-[8px] w-full">
+              <button
+                type="button"
+                onClick={() => setConfirmClearOpen(false)}
+                className="bg-[#1a1e2b] border border-[#2a3044] border-solid rounded-[8px] flex-1 py-[8px] font-inter font-medium text-[13px] text-[#cbd5e1] cursor-pointer hover:bg-[#20263a] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={clearNotes}
+                className="bg-[#dc2626] border border-[#dc2626] border-solid rounded-[8px] flex-1 py-[8px] font-inter font-medium text-[13px] text-white cursor-pointer hover:bg-[#b91c1c] transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div
-        className={`content-stretch flex h-full w-[200%] relative transition-transform duration-[420ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
-          notesOpen ? (notesMaximized ? "-translate-x-1/2" : "-translate-x-1/4") : "translate-x-0"
+        className={`absolute inset-y-0 right-0 overflow-hidden transition-[left] duration-200 ease-out ${
+          collapsed ? "left-0" : "left-[260px]"
         }`}
       >
-      <div className="bg-[#0b0d13] content-stretch flex flex-col items-start pt-[64px] px-[24px] relative shrink-0 w-1/2 h-full min-h-0">
+      <div
+        className={`flex h-full w-[200%] transition-transform duration-[420ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
+          notesOpen ? (notesMaximized ? "-translate-x-1/2" : "-translate-x-[12.5%]") : "translate-x-0"
+        }`}
+      >
+      <div className="bg-[#0b0d13] content-stretch flex flex-col items-start pt-[64px] relative h-full w-1/2 shrink-0 overflow-hidden">
         {/* Subheader ribbon */}
         <div className="backdrop-blur-[6px] bg-[rgba(17,20,29,0.95)] border-[#1e2230] border-b border-solid content-stretch flex items-center justify-between pb-[9px] pt-[8px] px-[16px] relative shrink-0 w-full z-[2]">
           <div className="content-stretch flex gap-[4px] items-center relative shrink-0">
@@ -763,7 +1011,7 @@ export default function Chat() {
             </span>
             <img alt="" src={`${A}/chat-chevron.svg`} className="h-[7px] w-[4.317px] shrink-0" />
             <span className="font-inter font-semibold text-[#e2e8f0] text-[13px] tracking-[0.13px] leading-[16px] whitespace-nowrap">
-              {pdfName}
+              {headerTitle}
             </span>
           </div>
           <div className="content-stretch flex gap-[8px] items-center relative shrink-0">
@@ -820,7 +1068,7 @@ export default function Chat() {
 
             {/* Floating query console, styled like the workspace composer (no destination folder) */}
             <div className="absolute bottom-0 content-stretch flex flex-col items-center inset-x-0 px-[12px] pb-[14px] pt-[12px] pointer-events-none relative z-10">
-              <div className="backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[9px] pointer-events-auto relative rounded-[12px] w-full">
+              <div className="backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[9px] pointer-events-auto relative rounded-[12px] w-full max-w-[820px]">
                 <div className="absolute bg-[rgba(255,255,255,0)] inset-[-1px_-1px_-1.33px_-1px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] pointer-events-none" />
 
                 {(file || error || status) && (
@@ -850,7 +1098,15 @@ export default function Chat() {
                       <input
                         type="text"
                         value={query}
-                        onChange={(e) => setQuery(e.target.value)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setQuery(v);
+                          const intent = detectWebIntent(v);
+                          if (intent !== null) {
+                            webSearchRef.current = intent;
+                            setWebSearch(intent);
+                          }
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") handleSend();
                         }}
@@ -939,10 +1195,10 @@ export default function Chat() {
                           key={s.key}
                           className="bg-[#161922] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[13px] relative rounded-[12px] shrink-0 w-full cursor-pointer hover:border-[#3b4361] transition-colors"
                         >
-                          <div className="content-stretch flex items-start justify-between relative shrink-0 w-full">
-                            <div className="content-stretch flex gap-[4px] items-center min-w-px overflow-hidden relative shrink-0">
+                          <div className="content-stretch flex items-center justify-between gap-[8px] relative shrink-0 w-full">
+                            <div className="content-stretch flex gap-[4px] items-center min-w-0 flex-1 overflow-hidden relative">
                               <img alt="" src={s.icon} className="relative shrink-0 size-[15px]" />
-                              <span className="font-inter font-semibold text-[#e2e8f0] text-[13px] tracking-[0.13px] leading-[16px] truncate">
+                              <span className="font-inter font-semibold text-[#e2e8f0] text-[13px] tracking-[0.13px] leading-[16px] truncate min-w-0 flex-1">
                                 {s.title}
                               </span>
                             </div>
@@ -974,8 +1230,89 @@ export default function Chat() {
                 </div>
 
                 <div className="border-[#1e2230] border-t border-solid content-stretch flex flex-col items-start pb-[16px] pt-[17px] px-[16px] relative shrink-0 w-full">
+                  <div
+                    aria-hidden={!addSourceOpen}
+                    className={`absolute bottom-[calc(100%+8px)] left-[16px] right-[16px] origin-bottom backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid rounded-[12px] p-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] z-20 transition-[opacity,transform] duration-200 ease-out ${
+                      addSourceOpen
+                        ? "animate-[folder-popup-in_180ms_ease-out] opacity-100 pointer-events-auto [transform:translateY(0)_scaleY(1)]"
+                        : "opacity-0 pointer-events-none [transform:translateY(8px)_scaleY(0.65)]"
+                    }`}
+                  >
+                      {addSourceMode === "menu" ? (
+                        <div className="content-stretch flex flex-col gap-[8px] w-full">
+                          <div className="font-inter text-[12px] text-[#94a3b8] leading-[16px]">
+                            Add a source
+                          </div>
+                          <div className="content-stretch flex gap-[8px] w-full">
+                            <button
+                              type="button"
+                              onClick={() => sourceInputRef.current?.click()}
+                              disabled={sourceBusy}
+                              title="Attach a PDF"
+                              className="content-stretch flex flex-1 flex-col items-center gap-[6px] py-[12px] rounded-[10px] border border-[#2a3044] bg-[#161922] cursor-pointer hover:bg-[#1b202e] hover:border-[#6366f1] transition-colors"
+                            >
+                              <span className="text-[#a5b4fc]">
+                                <PinIcon />
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAddSourceMode("url")}
+                              disabled={sourceBusy}
+                              title="Add from a web URL"
+                              className="content-stretch flex flex-1 flex-col items-center gap-[6px] py-[12px] rounded-[10px] border border-[#2a3044] bg-[#161922] cursor-pointer hover:bg-[#1b202e] hover:border-[#6366f1] transition-colors"
+                            >
+                              <img alt="" src={`${A}/chat-globe.svg`} className="size-[16px]" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="content-stretch flex flex-col gap-[8px] w-full">
+                          <textarea
+                            autoFocus
+                            rows={1}
+                            value={sourceUrl}
+                            onChange={(e) => setSourceUrl(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                addWebSource();
+                              }
+                            }}
+                            placeholder="Paste resource URL here..."
+                            className="bg-[#0b0d13] border border-[#2a3044] border-solid rounded-[8px] resize-none outline-none px-[10px] py-[8px] font-inter text-[13px] leading-[18px] text-[#e2e8f0] placeholder:text-[#64748b] w-full focus:border-[#6366f1]"
+                          />
+                          <div className="content-stretch flex gap-[6px] w-full">
+                            <button
+                              type="button"
+                              onClick={addWebSource}
+                              disabled={sourceBusy || !sourceUrl.trim()}
+                              className="bg-[#4f46e5] border border-[#4f46e5] border-solid rounded-[8px] flex-1 py-[8px] font-inter font-medium text-[13px] text-center text-white cursor-pointer disabled:opacity-50"
+                            >
+                              {sourceBusy ? "Identifying…" : "Add source"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAddSourceMode("menu");
+                                setSourceError("");
+                              }}
+                              className="bg-[#1a1e2b] border border-[#2a3044] border-solid rounded-[8px] px-[12px] py-[8px] font-inter font-medium text-[13px] text-[#cbd5e1] cursor-pointer hover:bg-[#20263a]"
+                            >
+                              Back
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {sourceError && (
+                        <div className="font-inter text-[12px] text-[#f87171] leading-[16px] pt-[6px]">
+                          {sourceError}
+                        </div>
+                      )}
+                  </div>
                   <button
                     type="button"
+                    onClick={() => (addSourceOpen ? closeAddSource() : openAddSource())}
                     className="bg-[#161922] border border-[#2a3044] border-solid content-stretch drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] flex gap-[4px] items-center justify-center px-[13px] py-[9px] relative rounded-[12px] shrink-0 w-full cursor-pointer hover:bg-[#1b202e] transition-colors"
                   >
                     <img alt="" src={`${A}/chat-plus.svg`} className="relative shrink-0 size-[10.5px]" />
@@ -983,23 +1320,29 @@ export default function Chat() {
                       Add External Source
                     </span>
                   </button>
+                  <input
+                    ref={sourceInputRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    className="hidden"
+                    onChange={onSourceFile}
+                  />
                 </div>
               </div>
             </div>
           </aside>
         </div>
       </div>
-      </div>
 
       <div
-        className={`bg-[#0b0d13] content-stretch flex flex-col items-start relative shrink-0 self-stretch h-full min-h-0 overflow-hidden border-[#1e2230] border-l border-solid ${
-          notesMaximized ? "w-1/2" : "w-1/4"
+        className={`bg-[#0b0d13] content-stretch flex flex-col items-start relative h-full shrink-0 overflow-hidden border-[#1e2230] border-l border-solid pt-[64px] ${
+          notesMaximized ? "w-1/2" : "w-[12.5%]"
         }`}
       >
-        <div className="border-[#1e2230] border-b border-solid content-stretch flex items-center justify-between pb-[11px] pt-[16px] px-[16px] relative shrink-0 w-full">
-          <div className="content-stretch flex gap-[8px] items-center relative shrink-0">
+        <div className="border-[#1e2230] border-b border-solid content-stretch flex items-center justify-between gap-[8px] pb-[11px] pt-[16px] px-[16px] relative shrink-0 w-full">
+          <div className="content-stretch flex gap-[8px] items-center min-w-0 flex-1 overflow-hidden relative">
             <img alt="" src={`${A}/chat-note.svg`} className="relative shrink-0 size-[16px]" />
-            <span className="font-inter font-semibold text-[#f1f5f9] text-[14px] leading-[22px] whitespace-nowrap">
+            <span className="font-inter font-semibold text-[#f1f5f9] text-[14px] leading-[22px] truncate">
               Notepad
             </span>
           </div>
@@ -1008,19 +1351,18 @@ export default function Chat() {
               type="button"
               onClick={exportNotes}
               title="Export notes"
-              className="bg-[#1a1e2b] border border-[#2a3044] border-solid content-stretch flex gap-[6px] items-center px-[10px] py-[6px] relative rounded-[8px] shrink-0 cursor-pointer hover:bg-[#20263a] transition-colors"
+              className="bg-[#1a1e2b] border border-[#2a3044] border-solid content-stretch flex items-center px-[10px] py-[6px] relative rounded-[8px] shrink-0 cursor-pointer hover:bg-[#20263a] transition-colors"
             >
-              <img alt="" src={`${A}/pc-download.svg`} className="relative shrink-0 size-[13px]" />
               <span className="font-inter font-medium text-[#a5b4fc] text-[12px] leading-[16px] whitespace-nowrap">
                 Export
               </span>
             </button>
             <button
               type="button"
-              onClick={clearNotes}
+              onClick={() => noteText && setConfirmClearOpen(true)}
               aria-label="Clear notepad"
               title="Clear notepad"
-              className="content-stretch flex items-center justify-center p-[7px] relative rounded-[8px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#f87171] transition-colors"
+              className="bg-[#1a1e2b] border border-[#2a3044] border-solid content-stretch flex items-center justify-center p-[7px] relative rounded-[8px] shrink-0 cursor-pointer text-[#f87171] hover:bg-[#251a1f] transition-colors"
             >
               <TrashIcon />
             </button>
@@ -1029,7 +1371,7 @@ export default function Chat() {
               onClick={() => setNotesMaximized((v) => !v)}
               aria-label={notesMaximized ? "Restore notepad" : "Maximise notepad"}
               title={notesMaximized ? "Restore" : "Maximise"}
-              className="content-stretch flex items-center justify-center p-[7px] relative rounded-[8px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#cbd5e1] transition-colors"
+              className="bg-[#1a1e2b] border border-[#2a3044] border-solid content-stretch flex items-center justify-center p-[7px] relative rounded-[8px] shrink-0 cursor-pointer text-[#cbd5e1] hover:bg-[#20263a] transition-colors"
             >
               {notesMaximized ? <RestoreIcon /> : <MaximizeIcon />}
             </button>
@@ -1042,11 +1384,8 @@ export default function Chat() {
           placeholder={"Take notes for this chat…\n\nUse the share button on a response to append it here."}
           className="bg-transparent border-0 flex-1 min-h-0 resize-none outline-none p-[16px] font-inter text-[14px] leading-[22.75px] text-[#e2e8f0] placeholder:text-[#64748b] w-full"
         />
-        <div className="border-[#1e2230] border-t border-solid content-stretch flex items-center px-[16px] py-[10px] relative shrink-0 w-full">
-          <span className="font-inter text-[12px] text-[#64748b] leading-[16px]">
-            Saved per chat and kept on this device.
-          </span>
-        </div>
+      </div>
+      </div>
       </div>
     </div>
   );
