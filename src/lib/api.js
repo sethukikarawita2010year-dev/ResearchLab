@@ -54,6 +54,31 @@ export async function listConversions() {
   return Array.isArray(data.conversions) ? data.conversions : [];
 }
 
+export async function analyzePaper({ documentId, language = "auto" }) {
+  const res = await fetch(`${API_BASE}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_id: documentId, language }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function chatMessage({ documentId, messages, webSearch = true, language = "auto" }) {
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      messages,
+      web_search: webSearch,
+      language,
+    }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
 export function conversionDownloadUrl(downloadUrl) {
   if (!downloadUrl) return null;
   if (/^https?:\/\//.test(downloadUrl)) return downloadUrl;

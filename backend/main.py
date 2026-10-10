@@ -9,6 +9,8 @@ POST /api/upload                     upload a single PDF (pdf-only, size-limited
 POST /api/convert                    convert a document (docx/csv/html/xlsx/txt/pptx/md) to PDF
 GET  /api/convert/{id}/download      download a converted PDF
 GET  /api/conversions                list saved conversions (newest first)
+POST /api/analyze                    produce the five-section structured summary via Gemini
+POST /api/chat                       grounded Q&A over an uploaded PDF (optional web search)
 
 Run with:
     uvicorn main:app --reload --port 8000
@@ -27,6 +29,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from conversion import ConversionError, convert_to_pdf
+import gemini
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -103,6 +106,23 @@ class SessionCreate(BaseModel):
 
 class SessionUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
+
+
+class AnalyzeRequest(BaseModel):
+    document_id: str = Field(min_length=1)
+    language: str = Field(default="auto")
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=12000)
+
+
+class ChatRequest(BaseModel):
+    document_id: str = Field(min_length=1)
+    messages: list[ChatMessage] = Field(min_length=1)
+    web_search: bool = True
+    language: str = Field(default="auto")
 
 
 def _now() -> str:
@@ -214,6 +234,45 @@ def download_conversion(conversion_id: str) -> FileResponse:
     if record is None or not path.exists():
         raise HTTPException(status_code=404, detail="Conversion not found")
     return FileResponse(path, media_type="application/pdf", filename=record["pdf_filename"])
+
+
+def _resolve_upload(upload_id: str) -> Path:
+    record = UPLOADS.get(upload_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Document not found. Upload the PDF first.")
+    path = UPLOAD_DIR / f"{upload_id}.pdf"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Document file is missing.")
+    return path
+
+
+@app.post("/api/analyze")
+def analyze_paper(payload: AnalyzeRequest) -> dict:
+    path = _resolve_upload(payload.document_id)
+    try:
+        return gemini.structured_summary(payload.document_id, path, payload.language)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}") from exc
+
+
+@app.post("/api/chat")
+def chat(payload: ChatRequest) -> dict:
+    path = _resolve_upload(payload.document_id)
+    messages = [message.model_dump() for message in payload.messages]
+    try:
+        return gemini.chat_answer(
+            payload.document_id,
+            path,
+            messages,
+            web_search=payload.web_search,
+            language=payload.language,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI chat failed: {exc}") from exc
 
 
 if __name__ == "__main__":
