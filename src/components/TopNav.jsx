@@ -1,6 +1,7 @@
 import { forwardRef, useLayoutEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePdfSlide } from "./PdfSlide";
+import { useSidebar } from "./sidebarContext";
 
 const A = "/assets";
 
@@ -27,6 +28,7 @@ const Tab = forwardRef(function Tab({ label, active, onClick }, ref) {
 
 export default function TopNav() {
   const { isOpen, open, close } = usePdfSlide();
+  const { collapsed } = useSidebar();
   const navigate = useNavigate();
   const tabsRef = useRef(null);
   const pillRef = useRef(null);
@@ -42,7 +44,11 @@ export default function TopNav() {
   }, [isOpen]);
 
   return (
-    <div className="absolute backdrop-blur-[12px] bg-[rgba(11,13,19,0.85)] border-[#1e2230] border-b border-solid flex flex-col h-[65px] items-start left-[260px] pb-px right-0 top-0 z-20">
+    <div
+      className={`absolute backdrop-blur-[12px] bg-[rgba(11,13,19,0.85)] border-[#1e2230] border-b border-solid flex flex-col h-[65px] items-start pb-px right-0 top-0 z-20 ${
+        collapsed ? "left-[260px]" : "left-[260px]"
+      }`}
+    >
       <div className="h-[64px] relative shrink-0 w-full">
         <div className="flex items-center justify-between px-[24px] relative size-full">
           <div className="bg-[#161922] border border-[#2a3044] border-solid flex items-center p-[5px] relative rounded-[12px] shrink-0">

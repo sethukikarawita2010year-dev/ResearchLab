@@ -64,12 +64,21 @@ export async function analyzePaper({ documentId, language = "auto" }) {
   return res.json();
 }
 
-export async function chatMessage({ documentId, messages, webSearch = true, language = "auto" }) {
+export async function chatMessage({
+  documentId,
+  documentIds = [],
+  chatId,
+  messages,
+  webSearch = true,
+  language = "auto",
+}) {
   const res = await fetch(`${API_BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       document_id: documentId,
+      document_ids: documentIds,
+      chat_id: chatId || null,
       messages,
       web_search: webSearch,
       language,

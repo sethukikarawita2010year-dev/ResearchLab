@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from conversion import ConversionError, convert_to_pdf
-import gemini
+import llm
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -120,6 +120,8 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     document_id: str = Field(min_length=1)
+    document_ids: list[str] = Field(default_factory=list)
+    chat_id: str | None = None
     messages: list[ChatMessage] = Field(min_length=1)
     web_search: bool = True
     language: str = Field(default="auto")
@@ -250,7 +252,7 @@ def _resolve_upload(upload_id: str) -> Path:
 def analyze_paper(payload: AnalyzeRequest) -> dict:
     path = _resolve_upload(payload.document_id)
     try:
-        return gemini.structured_summary(payload.document_id, path, payload.language)
+        return llm.structured_summary(payload.document_id, path, payload.language)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -260,14 +262,39 @@ def analyze_paper(payload: AnalyzeRequest) -> dict:
 @app.post("/api/chat")
 def chat(payload: ChatRequest) -> dict:
     path = _resolve_upload(payload.document_id)
+
+    docs: list[dict] = []
+    seen: set[str] = set()
+
+    def add_doc(doc_id: str) -> None:
+        if doc_id in seen:
+            return
+        seen.add(doc_id)
+        doc_path = _resolve_upload(doc_id)
+        record = UPLOADS.get(doc_id, {})
+        docs.append(
+            {
+                "id": doc_id,
+                "filename": record.get("filename") or doc_path.name,
+                "path": doc_path,
+            }
+        )
+
+    add_doc(payload.document_id)
+    for extra_id in payload.document_ids:
+        if extra_id != payload.document_id:
+            add_doc(extra_id)
+
     messages = [message.model_dump() for message in payload.messages]
     try:
-        return gemini.chat_answer(
+        return llm.chat_answer(
             payload.document_id,
             path,
             messages,
             web_search=payload.web_search,
             language=payload.language,
+            chat_id=payload.chat_id,
+            documents=docs,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

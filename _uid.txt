@@ -1,0 +1,1 @@
+{"id":"6f801c0f9c37418aa9cafd343dd74e86","filename":"21aa22e0bff748829c3ec2dd484c6dcb.pdf","size":379313,"content_type":"application/pdf","uploaded_at":"2026-10-10T10:22:00.936599+00:00"}
