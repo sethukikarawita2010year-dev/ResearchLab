@@ -41,3 +41,54 @@ body {
   width: 0;
   height: 0;
 }
+
+/* --- PDF text layer (extracted from pdfjs-dist, scoped to .rl-text-layer) --- */
+.rl-text-layer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+}
+.rl-text-layer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.rl-text-layer ::selection {
+  background: rgba(99, 102, 241, 0.35);
+}
+
+/* --- Annotation + citation highlight tones --- */
+.rl-mark-annotation {
+  background: rgba(99, 102, 241, 0.16);
+  border: 1px solid #6366f1;
+  box-shadow:
+    0 0 10px rgba(99, 102, 241, 0.55),
+    0 0 2px rgba(99, 102, 241, 0.9);
+}
+.rl-mark-citation {
+  background: rgba(250, 204, 21, 0.32);
+  border: 1px solid rgba(250, 204, 21, 0.75);
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.5);
+  animation: rl-citation-flash 2s ease-out forwards;
+}
+@keyframes rl-citation-flash {
+  0% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}

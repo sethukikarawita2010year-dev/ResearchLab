@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { usePdfAttachment, PdfFileInput, PdfChip } from "../components/PdfAttachment";
 import RichText from "../components/RichText";
-import { analyzePaper, chatMessage, uploadPdf, resolveSource } from "../lib/api";
+import SourceViewer from "../components/SourceViewer";
+import RangeMarks from "../components/RangeMarks";
+import { analyzePaper, chatMessage, uploadPdf, resolveSource, documentUrl } from "../lib/api";
+import { selectionOffsets, selectionRect, clearSelection } from "../lib/domText";
 import { useSidebar } from "../components/sidebarContext";
 import {
   createSessionRecord,
@@ -124,6 +127,24 @@ function PinIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 17v5" />
       <path d="M9 10.76V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v5.76a1 1 0 0 0 .3.7l1.55 1.56a1 1 0 0 1 .29.7V16a1 1 0 0 1-1 1H7.86a1 1 0 0 1-1-1v-1.58a1 1 0 0 1 .3-.7l1.54-1.56a1 1 0 0 0 .3-.7Z" />
+    </svg>
+  );
+}
+
+function MinusIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function MarkerIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="M8 11l4 4 4-4" />
+      <path d="M5 21h14" />
     </svg>
   );
 }
@@ -320,7 +341,8 @@ function SummaryCard({ sections }) {
   );
 }
 
-function MessageView({ msg, onCopy, onShare }) {
+function MessageView({ msg, onCopy, onShare, onCitation, annotations, onAnnotate }) {
+  const answerRef = useRef(null);
   if (msg.role === "user") {
     return (
       <div className="content-stretch flex flex-col items-start pl-[48px] relative shrink-0 w-full">
@@ -392,10 +414,24 @@ function MessageView({ msg, onCopy, onShare }) {
                 {msg.content}
               </p>
             ) : (
-              <div className="font-inter text-[14px] leading-[22.75px] text-[#cbd5e1] w-full">
+              <div
+                ref={answerRef}
+                className="relative font-inter text-[14px] leading-[22.75px] text-[#cbd5e1] w-full"
+                onMouseUp={() => {
+                  const offsets = selectionOffsets(answerRef.current);
+                  if (offsets) onAnnotate?.(msg.id, { ...offsets, rect: selectionRect() });
+                }}
+              >
                 <RichText
                   text={typeof msg.content === "string" ? msg.content : ""}
                   citations={msg.citations}
+                  onCitation={onCitation}
+                />
+                <RangeMarks
+                  hostRef={answerRef}
+                  items={(annotations || [])
+                    .filter((a) => a.target?.kind === "message" && a.target?.id === msg.id)
+                    .map((a) => ({ ...a, tone: "annotation" }))}
                 />
               </div>
             )}
@@ -425,7 +461,7 @@ function EmptyState({ pdfName }) {
 }
 
 export default function Chat() {
-  const { collapsed } = useSidebar();
+  const { collapsed, setCollapsed } = useSidebar();
   const location = useLocation();
   const sessions = useSessions();
   const [documentId, setDocumentId] = useState(
@@ -451,6 +487,10 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [webSearch, setWebSearch] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(true);
+  const [viewer, setViewer] = useState(null);
+  const [focus, setFocus] = useState(null);
+  const [annotations, setAnnotations] = useState([]);
+  const [pendingSelection, setPendingSelection] = useState(null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState("idle");
   const [status, setStatus] = useState("");
@@ -499,6 +539,10 @@ export default function Chat() {
   useEffect(() => {
     webSearchRef.current = webSearch;
   }, [webSearch]);
+  const annotationsRef = useRef(annotations);
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
   const startedRef = useRef(false);
   const sendGuard = useRef(Promise.resolve());
   const enqueue = (fn) => {
@@ -562,6 +606,12 @@ export default function Chat() {
         chatId: sessionIdRef.current || docId,
         messages: history,
         webSearch: webSearchRef.current,
+        annotations: (annotationsRef.current || []).map((a, i) => ({
+          index: i + 1,
+          text: a.text,
+          source: a.source_title,
+          page: a.page,
+        })),
       });
       addAssistant(res.text, res.citations);
     } catch (err) {
@@ -588,6 +638,9 @@ export default function Chat() {
       messagesRef.current = rec.messages;
       setExtraDocs(Array.isArray(rec.extraDocs) ? rec.extraDocs : []);
       setWebSources(Array.isArray(rec.webSources) ? rec.webSources : []);
+      const restored = Array.isArray(rec.annotations) ? rec.annotations : [];
+      annotationsRef.current = restored;
+      setAnnotations(restored);
       return;
     }
 
@@ -609,6 +662,8 @@ export default function Chat() {
     messagesRef.current = [userMsg];
     setExtraDocs([]);
     setWebSources([]);
+    annotationsRef.current = [];
+    setAnnotations([]);
     if (!rec) {
       createSessionRecord({
         id: sid,
@@ -657,6 +712,20 @@ export default function Chat() {
     if (!sessionId) return;
     updateSession(sessionId, { webSources });
   }, [webSources, sessionId]);
+
+  useEffect(() => {
+    if (!pendingSelection) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setPendingSelection(null);
+    };
+    const onScroll = () => setPendingSelection(null);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [pendingSelection]);
 
   useEffect(() => {
     if (!sessionId || !documentId) return;
@@ -880,6 +949,98 @@ export default function Chat() {
     }
   };
 
+  const viewerRef = useRef(null);
+  const rootRef = useRef(null);
+  useEffect(() => {
+    viewerRef.current = viewer;
+  }, [viewer]);
+  const sidebarBeforeRef = useRef(false);
+
+  const openViewer = (source, spec = null) => {
+    if (!source) return;
+    if (!viewerRef.current) sidebarBeforeRef.current = collapsed;
+    if (!collapsed) setCollapsed(true);
+    viewerRef.current = source;
+    setViewer(source);
+    setFocus(spec ? { ...spec, nonce: Date.now() } : null);
+  };
+
+  const closeViewer = () => {
+    viewerRef.current = null;
+    setViewer(null);
+    setFocus(null);
+    setCollapsed(sidebarBeforeRef.current);
+  };
+
+  const openCitation = (cit) => {
+    if (!cit) return;
+    const isWeb = cit.type === "web" || cit.source_type === "web";
+    if (isWeb) {
+      const url = cit.source_id || cit.url;
+      if (!url) return;
+      openViewer(
+        { kind: "web", id: url, url, title: cit.title || hostOf(url) },
+        { passage: cit.passage || "", section: cit.section ?? null },
+      );
+      return;
+    }
+    const id = cit.source_id || documentId;
+    const attached = extraDocs.find((d) => d.id === id);
+    const name = (attached && attached.name) || cit.title || (id === documentId ? pdfName : "") || "Document";
+    openViewer(
+      { kind: "pdf", id, title: name, pdfUrl: documentUrl(id) },
+      { page: cit.page || 1, passage: cit.passage || "", section: cit.section ?? null },
+    );
+  };
+
+  const queueAnnotation = (draft) => {
+    if (!draft || draft.start == null || draft.end == null) return;
+    setPendingSelection(draft);
+  };
+
+  const handleSourceAnnotate = (sel) => {
+    const v = viewerRef.current;
+    if (!v || !sel) return;
+    queueAnnotation({ kind: v.kind, targetId: v.id, sourceTitle: v.title, page: sel.page ?? null, ...sel });
+  };
+
+  const handleAnswerAnnotate = (msgId, sel) => {
+    if (!sel) return;
+    queueAnnotation({ kind: "message", targetId: msgId, sourceTitle: "Answer", page: null, ...sel });
+  };
+
+  const persistAnnotations = (next) => {
+    annotationsRef.current = next;
+    setAnnotations(next);
+    if (sessionId) updateSession(sessionId, { annotations: next });
+  };
+
+  const commitAnnotation = () => {
+    const sel = pendingSelection;
+    setPendingSelection(null);
+    if (!sel) return;
+    const next = [
+      ...(annotationsRef.current || []),
+      {
+        id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        chat_id: sessionId || documentId || null,
+        target: { kind: sel.kind, id: sel.targetId },
+        page: sel.page ?? null,
+        start: sel.start,
+        end: sel.end,
+        text: sel.text,
+        source_title: sel.sourceTitle || "",
+        created_at: new Date().toISOString(),
+      },
+    ];
+    persistAnnotations(next);
+    clearSelection();
+  };
+
+  const removeAnnotation = (id) =>
+    persistAnnotations((annotationsRef.current || []).filter((a) => a.id !== id));
+  const clearAnnotations = () => persistAnnotations([]);
+
   const sources = useMemo(() => {
     const list = [];
     const docs = [
@@ -896,6 +1057,7 @@ export default function Chat() {
         title: d.name,
         badge: "PDF",
         meta: d.primary ? "Uploaded document • primary source" : "Uploaded document • attached",
+        source: { kind: "pdf", id: d.id, title: d.name, pdfUrl: documentUrl(d.id) },
       });
     });
     const seen = new Set();
@@ -908,6 +1070,7 @@ export default function Chat() {
         title: w.title || hostOf(w.url),
         badge: "WEB",
         meta: w.url,
+        source: { kind: "web", id: w.url, url: w.url, title: w.title || hostOf(w.url) },
       });
     });
     messages.forEach((m) => {
@@ -920,6 +1083,7 @@ export default function Chat() {
             title: c.title || hostOf(c.url),
             badge: "WEB",
             meta: c.url,
+            source: { kind: "web", id: c.url, url: c.url, title: c.title || hostOf(c.url) },
           });
         }
       });
@@ -928,7 +1092,7 @@ export default function Chat() {
   }, [messages, documentId, pdfName, extraDocs, webSources]);
 
   return (
-    <div className="bg-[#0b0d13] relative h-screen w-full overflow-hidden">
+    <div ref={rootRef} className="bg-[#0b0d13] relative h-screen w-full overflow-hidden">
       {copied && (
         <div className="pointer-events-none absolute left-1/2 top-[76px] -translate-x-1/2 w-max z-[60]">
           <div className="backdrop-blur-[12px] bg-[rgba(17,20,29,0.95)] border border-[#2a3044] border-solid content-stretch drop-shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.3),0px_4px_6px_-4px_rgba(0,0,0,0.3)] flex items-center gap-[8px] px-[14px] py-[9px] relative rounded-[10px]">
@@ -992,9 +1156,50 @@ export default function Chat() {
           </div>
         </div>
       )}
+      {pendingSelection && pendingSelection.rect && (
+        <div
+          className="absolute z-[130]"
+          style={{
+            left: Math.max(
+              8,
+              Math.min(
+                (rootRef.current?.clientWidth || 1200) - 158,
+                pendingSelection.rect.left -
+                  (rootRef.current?.getBoundingClientRect().left || 0) +
+                  pendingSelection.rect.width / 2 -
+                  75,
+              ),
+            ),
+            top: Math.max(
+              8,
+              pendingSelection.rect.top - (rootRef.current?.getBoundingClientRect().top || 0) - 44,
+            ),
+          }}
+        >
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={commitAnnotation}
+            className="backdrop-blur-[12px] bg-[rgba(79,70,229,0.95)] border border-[#6366f1] border-solid content-stretch flex gap-[6px] items-center px-[12px] py-[7px] relative rounded-[10px] shadow-[0px_0px_10px_rgba(99,102,241,0.55),0px_0px_2px_rgba(99,102,241,0.9)] cursor-pointer hover:bg-[rgba(91,82,240,0.98)] transition-colors"
+          >
+            <span className="text-white shrink-0">
+              <MarkerIcon />
+            </span>
+            <span className="font-inter font-semibold text-white text-[12px] leading-[16px] whitespace-nowrap">
+              Add annotation
+            </span>
+          </button>
+        </div>
+      )}
       <div
         className={`absolute inset-y-0 right-0 overflow-hidden transition-[left] duration-200 ease-out ${
           collapsed ? "left-0" : "left-[260px]"
+        }`}
+      >
+      <div className="flex h-full w-full">
+      <div
+        className={`relative h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
+          viewer ? "w-1/2" : "w-full"
         }`}
       >
       <div
@@ -1049,7 +1254,15 @@ export default function Chat() {
             <div className="content-stretch flex flex-col gap-[16px] items-start max-w-[1040px] pt-[16px] pb-[84px] relative shrink-0 w-full">
               {messages.length === 0 && <EmptyState pdfName={documentId ? pdfName : ""} />}
               {messages.map((m) => (
-                <MessageView key={m.id} msg={m} onCopy={copyResponse} onShare={handleShare} />
+                <MessageView
+                  key={m.id}
+                  msg={m}
+                  onCopy={copyResponse}
+                  onShare={handleShare}
+                  onCitation={openCitation}
+                  annotations={annotations}
+                  onAnnotate={handleAnswerAnnotate}
+                />
               ))}
               {busy !== "idle" && (
                 <div className="content-stretch flex flex-col items-start pr-[48px] relative shrink-0 w-full">
@@ -1184,6 +1397,49 @@ export default function Chat() {
                   </div>
                 </div>
 
+                {annotations.length > 0 && (
+                  <div className="content-stretch flex flex-col items-start pt-[12px] px-[16px] relative shrink-0 w-full">
+                    <div className="content-stretch flex items-center justify-between pb-[8px] relative shrink-0 w-full">
+                      <span className="font-inter font-semibold text-[#94a3b8] text-[11px] tracking-[0.33px] leading-[14px] uppercase">
+                        Annotations
+                      </span>
+                      <button
+                        type="button"
+                        onClick={clearAnnotations}
+                        aria-label="Delete all annotations"
+                        title="Delete all annotations"
+                        className="content-stretch flex items-center justify-center p-[4px] relative rounded-[6px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#f87171] transition-colors"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                    <div className="content-stretch flex flex-col gap-[6px] items-start relative shrink-0 w-full">
+                      {annotations.map((a, i) => (
+                        <div
+                          key={a.id}
+                          className="bg-[#161922] border border-[#2a3044] border-solid content-stretch flex gap-[8px] items-center px-[10px] py-[8px] relative rounded-[10px] shrink-0 w-full"
+                        >
+                          <span className="bg-[rgba(30,27,75,0.7)] border border-[rgba(67,56,202,0.5)] border-solid content-stretch flex items-center justify-center relative rounded-[6px] shrink-0 size-[20px]">
+                            <span className="font-inter font-semibold text-[#a5b4fc] text-[11px] leading-[14px]">{i + 1}</span>
+                          </span>
+                          <span className="font-inter text-[12px] text-[#cbd5e1] leading-[16px] truncate min-w-0 flex-1" title={a.text}>
+                            {a.text}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeAnnotation(a.id)}
+                            aria-label="Remove annotation"
+                            title="Remove annotation"
+                            className="content-stretch flex items-center justify-center p-[4px] relative rounded-[6px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#f87171] transition-colors"
+                          >
+                            <MinusIcon />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex-1 min-h-0 no-scrollbar overflow-y-auto relative w-full">
                   <div className="font-inter font-semibold text-[#94a3b8] text-[16px] tracking-[0.8px] uppercase leading-[24px] px-[20px] pt-[16px] pb-[8px]">
                     Referenced Corpus
@@ -1193,7 +1449,17 @@ export default function Chat() {
                       {sources.map((s) => (
                         <div
                           key={s.key}
-                          className="bg-[#161922] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[13px] relative rounded-[12px] shrink-0 w-full cursor-pointer hover:border-[#3b4361] transition-colors"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openViewer(s.source)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") openViewer(s.source);
+                          }}
+                          className={`bg-[#161922] border border-solid content-stretch flex flex-col gap-[4px] items-start p-[13px] relative rounded-[12px] shrink-0 w-full cursor-pointer hover:border-[#3b4361] transition-colors ${
+                            viewer?.id === s.source.id && viewer?.kind === s.source.kind
+                              ? "border-[#6366f1] ring-1 ring-[#6366f1]/40"
+                              : "border-[#2a3044]"
+                          }`}
                         >
                           <div className="content-stretch flex items-center justify-between gap-[8px] relative shrink-0 w-full">
                             <div className="content-stretch flex gap-[4px] items-center min-w-0 flex-1 overflow-hidden relative">
@@ -1387,6 +1653,25 @@ export default function Chat() {
       </div>
       </div>
       </div>
+      <div
+        className={`h-full shrink-0 overflow-hidden border-l border-[#1e2230] transition-[width] duration-200 ease-out ${
+          viewer ? "w-1/2" : "w-0"
+        }`}
+      >
+        {viewer && (
+          <SourceViewer
+            source={viewer}
+            focus={focus}
+            annotations={annotations.filter(
+              (a) => a.target?.kind === viewer.kind && a.target?.id === viewer.id,
+            )}
+            onAnnotate={handleSourceAnnotate}
+            onClose={closeViewer}
+          />
+        )}
+      </div>
+      </div>
+    </div>
     </div>
   );
 }

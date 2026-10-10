@@ -12,9 +12,26 @@ function hostOf(url) {
   }
 }
 
-function CitationPill({ label, web }) {
+function CitationPill({ label, web, onClick, active }) {
   return (
-    <span className="bg-[rgba(30,27,75,0.7)] border border-[rgba(67,56,202,0.5)] border-solid content-stretch inline-flex items-center gap-[6px] px-[9px] py-[2px] relative rounded-full align-middle mx-[2px] my-[1px]">
+    <span
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      className={`bg-[rgba(30,27,75,0.7)] border border-solid content-stretch inline-flex items-center gap-[6px] px-[9px] py-[2px] relative rounded-full align-middle mx-[2px] my-[1px] transition-colors ${
+        onClick ? "cursor-pointer hover:bg-[rgba(49,46,129,0.85)] hover:border-[#6366f1]" : ""
+      } ${active ? "border-[#6366f1] bg-[rgba(49,46,129,0.85)]" : "border-[rgba(67,56,202,0.5)]"}`}
+    >
       <img
         alt=""
         src={web ? `${A}/chat-globe.svg` : `${A}/chat-doc.svg`}
@@ -27,8 +44,32 @@ function CitationPill({ label, web }) {
   );
 }
 
-function CitationToken({ bracket, citations }) {
+function CitationToken({ bracket, citations, onCitation }) {
   const b = (bracket || "").trim();
+  const list = citations || [];
+
+  const cited = list.find((c) => c && String(c.raw || "").trim() === b);
+  if (cited) {
+    const web = cited.type === "web" || cited.source_type === "web";
+    const label = web
+      ? cited.title || hostOf(cited.url || "")
+      : [
+          cited.section ? `\u00A7${cited.section}` : null,
+          cited.page ? `p. ${cited.page}` : null,
+        ]
+          .filter(Boolean)
+          .join(" ");
+    if (label) {
+      return (
+        <CitationPill
+          label={label}
+          web={web}
+          onClick={onCitation ? () => onCitation(cited) : undefined}
+        />
+      );
+    }
+  }
+
   const pageMatch = b.match(/\b(\d+)\b/);
   const secMatch = b.match(
     /(?:\u00A7|Sect(?:ion)?\.?|section)\s*([0-9][0-9a-zA-Z.]*\b)/i,
@@ -38,23 +79,42 @@ function CitationToken({ bracket, citations }) {
     const label = [secMatch && `\u00A7${secMatch[1]}`, pageMatch && `p. ${pageMatch[1]}`]
       .filter(Boolean)
       .join(" ");
-    if (label) return <CitationPill label={label} web={false} />;
+    if (label) {
+      const pdfCited = list.find(
+        (c) => c && c.source_type === "pdf" && c.page === Number(pageMatch && pageMatch[1]),
+      );
+      return (
+        <CitationPill
+          label={label}
+          web={false}
+          onClick={pdfCited && onCitation ? () => onCitation(pdfCited) : undefined}
+        />
+      );
+    }
     return <span>[{bracket}]</span>;
   }
   if (/^\d+$/.test(b)) {
     const n = Number(b);
-    const webCitations = (citations || []).filter((c) => c && c.type === "web");
-    const cited = webCitations.find((c) => c.marker === n) || webCitations[n - 1];
-    if (cited) {
-      const label = cited.title || hostOf(cited.url || "");
-      if (label) return <CitationPill label={label} web />;
+    const webCitations = list.filter((c) => c && c.type === "web");
+    const hit = webCitations.find((c) => c.marker === n) || webCitations[n - 1];
+    if (hit) {
+      const label = hit.title || hostOf(hit.url || "");
+      if (label) {
+        return (
+          <CitationPill
+            label={label}
+            web
+            onClick={onCitation ? () => onCitation(hit) : undefined}
+          />
+        );
+      }
     }
     return <span>[{bracket}]</span>;
   }
   return <span>[{bracket}]</span>;
 }
 
-function Inline({ text, citations }) {
+function Inline({ text, citations, onCitation }) {
   const parts = [];
   let last = 0;
   let key = 0;
@@ -102,7 +162,9 @@ function Inline({ text, citations }) {
     } else if (italic != null) {
       node = <em className="italic">{content}</em>;
     } else if (bracket != null) {
-      node = <CitationToken bracket={bracket} citations={citations} />;
+      node = (
+        <CitationToken bracket={bracket} citations={citations} onCitation={onCitation} />
+      );
     }
 
     parts.push(<Fragment key={key++}>{node}</Fragment>);
@@ -112,7 +174,7 @@ function Inline({ text, citations }) {
   return parts;
 }
 
-function Blocks({ text, citations }) {
+function Blocks({ text, citations, onCitation }) {
   const lines = String(text).split("\n");
   const blocks = [];
   let i = 0;
@@ -185,7 +247,7 @@ function Blocks({ text, citations }) {
               key={index}
               className="font-semibold text-[#f1f5f9] text-[15px] tracking-[-0.15px] leading-[24px] w-full"
             >
-              <Inline text={block.text} citations={citations} />
+              <Inline text={block.text} citations={citations} onCitation={onCitation} />
             </h4>
           );
         }
@@ -194,7 +256,7 @@ function Blocks({ text, citations }) {
             <ul key={index} className="flex flex-col gap-[3px] list-disc pl-[22px] w-full">
               {block.items.map((item, itemIndex) => (
                 <li key={itemIndex} className="pl-[2px]">
-                  <Inline text={item} citations={citations} />
+                  <Inline text={item} citations={citations} onCitation={onCitation} />
                 </li>
               ))}
             </ul>
@@ -205,7 +267,7 @@ function Blocks({ text, citations }) {
             <ol key={index} className="flex flex-col gap-[3px] list-decimal pl-[22px] w-full">
               {block.items.map((item, itemIndex) => (
                 <li key={itemIndex} className="pl-[2px]">
-                  <Inline text={item} citations={citations} />
+                  <Inline text={item} citations={citations} onCitation={onCitation} />
                 </li>
               ))}
             </ol>
@@ -213,7 +275,7 @@ function Blocks({ text, citations }) {
         }
         return (
           <p key={index} className="w-full">
-            <Inline text={block.text} citations={citations} />
+            <Inline text={block.text} citations={citations} onCitation={onCitation} />
           </p>
         );
       })}
@@ -221,6 +283,6 @@ function Blocks({ text, citations }) {
   );
 }
 
-export default function RichText({ text, citations }) {
-  return <Blocks text={text} citations={citations} />;
+export default function RichText({ text, citations, onCitation }) {
+  return <Blocks text={text} citations={citations} onCitation={onCitation} />;
 }

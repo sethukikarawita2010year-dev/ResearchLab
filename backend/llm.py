@@ -224,7 +224,28 @@ def _merge_citations(
         if marker not in text and url not in text:
             continue
         seen.add(url)
-        merged.append({**source, "marker": index})
+        position = text.find(marker)
+        end = None
+        if position >= 0:
+            end = position + len(marker)
+        else:
+            position = text.find(url)
+            if position >= 0:
+                end = position + len(url)
+        merged.append(
+            {
+                **source,
+                "id": f"web-{index}",
+                "marker": index,
+                "type": "web",
+                "source_type": "web",
+                "source_id": url,
+                "raw": str(index),
+                "passage": _passage_for(text, position, end) if position >= 0 else "",
+                "start": position if position >= 0 else None,
+                "end": end,
+            }
+        )
     return merged
 
 
@@ -448,7 +469,24 @@ _PAGE_RE = re.compile(r"\bp(?:ages?|p)?\.?\s*(\d+)", re.I)
 _SECTION_RE = re.compile(r"(?:\u00A7|Sect(?:ion)?\.?)\s*([0-9][0-9a-zA-Z.]*\b)", re.I)
 
 
-def _parse_pdf_refs(text: str) -> list[dict[str, Any]]:
+def _passage_for(text: str, start: int, end: int, span: int = 240) -> str:
+    """Return the cited passage (the sentence/paragraph the bracket sits in)."""
+    if start is None or start < 0:
+        return ""
+    left = text.rfind("\n", 0, start)
+    right = text.find("\n", end if end is not None else start)
+    if right == -1:
+        right = len(text)
+    segment = text[left + 1 : right].strip()
+    if len(segment) > span:
+        rel = start - (left + 1)
+        segment = segment[max(0, rel - span // 2) : rel + span // 2].strip()
+    return segment
+
+
+def _parse_pdf_refs(text: str, documents: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    docs = documents or []
+    primary = docs[0] if docs else None
     refs: list[dict[str, Any]] = []
     for match in re.finditer(r"\[([^\[\]]+)\]", text):
         body = match.group(1).strip()
@@ -459,14 +497,30 @@ def _parse_pdf_refs(text: str) -> list[dict[str, Any]]:
         section_match = _SECTION_RE.search(body)
         if section_match:
             section = section_match.group(1)
+
+        source = primary
+        lowered = body.lower()
+        for doc in docs:
+            name = (doc.get("filename") or "").lower()
+            if name and (name in lowered or Path(name).stem in lowered):
+                source = doc
+                break
+
         refs.append(
             {
+                "id": f"pdf-{match.start()}",
                 "type": "pdf",
-                "title": "",
+                "source_type": "pdf",
+                "source_id": source.get("id") if source else None,
+                "title": (source.get("filename") if source else "") or "",
                 "url": None,
                 "page": pages[0],
                 "section": section,
-                "snippet": body,
+                "section_title": None,
+                "passage": _passage_for(text, match.start(), match.end()),
+                "raw": body,
+                "start": match.start(),
+                "end": match.end(),
             }
         )
     return refs
@@ -493,19 +547,26 @@ def _collect_web_callouts(response: Any) -> list[dict[str, Any]]:
         title = getattr(item, "title", None) or getattr(item, "name", "") or ""
         out.append(
             {
+                "id": f"web-{len(out)}",
                 "type": "web",
+                "source_type": "web",
+                "source_id": url,
                 "title": title,
                 "url": url,
                 "page": None,
                 "section": None,
-                "snippet": "",
+                "section_title": None,
+                "passage": "",
+                "raw": "",
+                "start": None,
+                "end": None,
             }
         )
     return out
 
 
-def _build_answer(response: Any, text: str) -> dict[str, Any]:
-    citations = _collect_web_callouts(response) + _parse_pdf_refs(text)
+def _build_answer(response: Any, text: str, documents: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    citations = _collect_web_callouts(response) + _parse_pdf_refs(text, documents)
     return {"text": text, "citations": citations}
 
 
@@ -517,6 +578,7 @@ def chat_answer(
     language: str = "auto",
     chat_id: str | None = None,
     documents: list[dict[str, Any]] | None = None,
+    annotations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Grounded Q&A over extracted PDFs, with optional web grounding.
 
@@ -555,6 +617,24 @@ def chat_answer(
             "relevant paper (and say which paper each point comes from).\n"
         )
 
+    annotation_note = ""
+    if annotations:
+        rows: list[str] = []
+        for item in annotations:
+            index = item.get("index")
+            text = (item.get("text") or "").strip().replace("\n", " ")
+            if len(text) > 160:
+                text = text[:160] + "\u2026"
+            source = item.get("source") or item.get("source_title") or "the document"
+            page = item.get("page")
+            location = f" (page {page})" if page else ""
+            rows.append(f'[{index}] "{text}" \u2014 {source}{location}')
+        annotation_note = (
+            "ANNOTATIONS\nThe user has saved the following annotations. Each begins with its "
+            "annotation number. When the user refers to \"annotation N\", resolve it to that "
+            "entry and quote or address its exact text:\n" + "\n".join(rows) + "\n\n"
+        )
+
     system_instruction = (
         "You are ResearchLab, a friendly academic research assistant.\n"
         "Answer in plain, accessible language; explain technical ideas simply without "
@@ -570,6 +650,7 @@ def chat_answer(
         "[p. PAGE \u00A7SECTION] or [p. PAGE], using the printed page numbers (the text is "
         "split with '----- PAGE N -----' markers).\n"
         "If you are not certain about something, say so rather than guessing.\n"
+        + annotation_note
     ) + _language_prompt(language)
 
     use_native_search = False
@@ -611,7 +692,7 @@ def chat_answer(
             **({"tools": [{"type": "web_search_preview"}]} if use_native_search else {}),
         )
         text = getattr(response, "output_text", None) or "[no response produced]"
-        result = _build_answer(response, text)
+        result = _build_answer(response, text, docs)
         _save_thread(chat_id, doc_ids, response.id)
         if use_native_search:
             result["web_search"] = True
@@ -637,7 +718,7 @@ def chat_answer(
                 **chain_kwargs,
             )
             text = getattr(response, "output_text", None) or "[no response produced]"
-            result = _build_answer(response, text)
+            result = _build_answer(response, text, docs)
             _save_thread(chat_id, doc_ids, response.id)
         except Exception as inner_exc:
             raise inner_exc
