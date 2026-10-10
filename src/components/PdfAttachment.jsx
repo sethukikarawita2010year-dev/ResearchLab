@@ -15,6 +15,12 @@ export function usePdfAttachment() {
     if (inputRef.current) inputRef.current.value = "";
   };
 
+  const attach = (picked) => {
+    if (!picked) return;
+    setError("");
+    setFile(picked);
+  };
+
   const onChange = (e) => {
     const picked = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -25,11 +31,10 @@ export function usePdfAttachment() {
       setError("Only PDF files are allowed.");
       return;
     }
-    setError("");
-    setFile(picked);
+    attach(picked);
   };
 
-  return { file, error, inputRef, open, onChange, clear };
+  return { file, error, inputRef, open, onChange, clear, attach };
 }
 
 export function PdfFileInput({ inputRef, onChange }) {

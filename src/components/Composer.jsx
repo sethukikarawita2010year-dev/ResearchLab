@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { usePdfAttachment, PdfFileInput, PdfChip } from "./PdfAttachment";
 import { uploadPdf } from "../lib/api";
 import { useSidebar } from "./sidebarContext";
+import { createSessionRecord } from "../lib/sessionStore";
+import { incrementFolderCount, incrementAllPapers } from "../lib/folderStore";
 
 const A = "/assets";
 
@@ -10,29 +13,67 @@ export default function Composer({
   showDestination = true,
   destination = "ML Papers",
   disabled = false,
+  sessionTitle = "",
 }) {
   const { collapsed } = useSidebar();
+  const navigate = useNavigate();
   const [text, setText] = useState("");
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
+  const [showPdfWarning, setShowPdfWarning] = useState(false);
   const { file, error, inputRef, open, onChange, clear } = usePdfAttachment();
+
+  useEffect(() => {
+    if (!showPdfWarning) return undefined;
+    const timer = setTimeout(() => setShowPdfWarning(false), 3000);
+    return () => clearTimeout(timer);
+  }, [showPdfWarning]);
+
+  useEffect(() => {
+    if (file) setShowPdfWarning(false);
+  }, [file]);
 
   const handleSend = async () => {
     if (disabled || sending) return;
-    if (!file && !text.trim()) return;
+    if (!file) {
+      setShowPdfWarning(true);
+      return;
+    }
 
+    const attached = file;
+    const prompt = text.trim();
     setSending(true);
     setStatus("");
     try {
-      if (file) {
-        const uploaded = await uploadPdf(file);
-        setStatus(`Attached ${uploaded.filename}`);
-      }
-      setText("");
+      const uploaded = await uploadPdf(attached);
+      const pdfName = uploaded.filename || attached.name;
+      const trimmedTitle = (sessionTitle || "").trim();
+      const title =
+        trimmedTitle && trimmedTitle !== "New research session" ? trimmedTitle : pdfName;
+      createSessionRecord({
+        id: uploaded.id,
+        title,
+        folder: destination,
+        pdfName,
+        prompt,
+        uploadId: uploaded.id,
+        messages: [],
+        extraDocs: [],
+        webSources: [],
+      });
+      incrementFolderCount(destination);
+      incrementAllPapers();
+      sessionStorage.setItem("researchlab.pdfName", pdfName);
+      sessionStorage.setItem("researchlab.uploadId", uploaded.id);
+      sessionStorage.setItem("researchlab.prompt", prompt);
       clear();
+      navigate("/chat", {
+        state: { sessionId: uploaded.id, prompt, uploadId: uploaded.id, pdfName, title },
+      });
     } catch (err) {
       setStatus(err.message || "Upload failed");
     } finally {
+      setText("");
       setSending(false);
     }
   };
@@ -79,6 +120,21 @@ export default function Composer({
         )}
 
         <div className="relative shrink-0 w-full">
+          {showPdfWarning && (
+            <div
+              role="alert"
+              className="absolute -top-[38px] right-[4px] bg-[#2a1b1b] border border-[#7f1d1d] border-solid flex items-center gap-[8px] px-[12px] py-[7px] rounded-[8px] shadow-[0px_10px_24px_-6px_rgba(0,0,0,0.5)] z-20 animate-[folder-popup-in_180ms_ease-out]"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="shrink-0">
+                <path d="M7 1.5L13 12H1L7 1.5Z" stroke="#f87171" strokeWidth="1.3" strokeLinejoin="round" />
+                <path d="M7 5.5V8.5" stroke="#f87171" strokeWidth="1.3" strokeLinecap="round" />
+                <circle cx="7" cy="10.3" r="0.7" fill="#f87171" />
+              </svg>
+              <span className="font-inter text-[13px] text-[#fca5a5] whitespace-nowrap">
+                attach a PDF before starting!
+              </span>
+            </div>
+          )}
           <div className="flex gap-[4px] items-center px-[4px] relative size-full">
             <button
               type="button"

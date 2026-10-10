@@ -6,7 +6,7 @@ export function SidebarProvider({ children }) {
   const [collapsed, setCollapsed] = useState(false);
   const toggle = () => setCollapsed((v) => !v);
   return (
-    <SidebarContext.Provider value={{ collapsed, toggle }}>{children}</SidebarContext.Provider>
+    <SidebarContext.Provider value={{ collapsed, setCollapsed, toggle }}>{children}</SidebarContext.Provider>
   );
 }
 

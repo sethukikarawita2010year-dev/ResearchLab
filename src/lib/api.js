@@ -54,6 +54,67 @@ export async function listConversions() {
   return Array.isArray(data.conversions) ? data.conversions : [];
 }
 
+export async function analyzePaper({ documentId, language = "auto" }) {
+  const res = await fetch(`${API_BASE}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_id: documentId, language }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function chatMessage({
+  documentId,
+  documentIds = [],
+  chatId,
+  messages,
+  webSearch = true,
+  language = "auto",
+  annotations = [],
+}) {
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      document_id: documentId,
+      document_ids: documentIds,
+      chat_id: chatId || null,
+      messages,
+      web_search: webSearch,
+      language,
+      annotations,
+    }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function resolveSource({ url }) {
+  const res = await fetch(`${API_BASE}/resolve-source`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export async function fetchSourceContent(url) {
+  const res = await fetch(`${API_BASE}/source-content`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+export function documentUrl(documentId) {
+  if (!documentId) return null;
+  return `${API_BASE.replace(/\/$/, "")}/document/${encodeURIComponent(documentId)}`;
+}
+
 export function conversionDownloadUrl(downloadUrl) {
   if (!downloadUrl) return null;
   if (/^https?:\/\//.test(downloadUrl)) return downloadUrl;
