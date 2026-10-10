@@ -10,61 +10,111 @@ async function readError(res) {
   return `Request failed (${res.status})`;
 }
 
-export async function createSession(title) {
-  const res = await fetch(`${API_BASE}/sessions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+async function jsonFetch(path, { method = "GET", body, ...rest } = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    credentials: "include",
+    ...rest,
   });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }
 
-export async function renameSession(sessionId, title) {
-  const res = await fetch(`${API_BASE}/sessions/${sessionId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
-  });
-  if (!res.ok) throw new Error(await readError(res));
-  return res.json();
+// --- Chat sessions (DB-backed, per user) -----------------------------------
+
+export async function createSession(title) {
+  return jsonFetch("/sessions", { method: "POST", body: { title } });
 }
+
+export function renameSession(sessionId, title) {
+  return jsonFetch(`/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    body: { title },
+  });
+}
+
+export async function listSessions() {
+  const data = await jsonFetch("/sessions");
+  return Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+export function saveSession(record) {
+  return jsonFetch("/sessions", { method: "POST", body: record });
+}
+
+export function patchSession(sessionId, patch) {
+  return jsonFetch(`/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function deleteSessionApi(sessionId) {
+  return jsonFetch(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
+// --- Folders (DB-backed, per user) -----------------------------------------
+
+export async function listFolders() {
+  const data = await jsonFetch("/folders");
+  return Array.isArray(data.folders) ? data.folders : [];
+}
+
+export function createFolderApi(name) {
+  return jsonFetch("/folders", { method: "POST", body: { name } });
+}
+
+export function incrementFolderApi(name) {
+  return jsonFetch(`/folders/${encodeURIComponent(name)}/increment`, { method: "POST" });
+}
+
+// --- Uploads / conversions -------------------------------------------------
 
 export async function uploadPdf(file) {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: form });
+  const res = await fetch(`${API_BASE}/upload`, {
+    method: "POST",
+    body: form,
+    credentials: "include",
+  });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
+}
+
+export async function listUploads() {
+  const data = await jsonFetch("/uploads");
+  return Array.isArray(data.uploads) ? data.uploads : [];
 }
 
 export async function convertFile(file, folder) {
   const form = new FormData();
   form.append("file", file);
   form.append("folder", folder || "All Papers");
-  const res = await fetch(`${API_BASE}/convert`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await readError(res));
-  return res.json();
-}
-
-export async function listConversions() {
-  const res = await fetch(`${API_BASE}/conversions`);
-  if (!res.ok) throw new Error(await readError(res));
-  const data = await res.json();
-  return Array.isArray(data.conversions) ? data.conversions : [];
-}
-
-export async function analyzePaper({ documentId, language = "auto" }) {
-  const res = await fetch(`${API_BASE}/analyze`, {
+  const res = await fetch(`${API_BASE}/convert`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ document_id: documentId, language }),
+    body: form,
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }
 
-export async function chatMessage({
+export async function listConversions() {
+  const data = await jsonFetch("/conversions");
+  return Array.isArray(data.conversions) ? data.conversions : [];
+}
+
+export function analyzePaper({ documentId, language = "auto" }) {
+  return jsonFetch("/analyze", {
+    method: "POST",
+    body: { document_id: documentId, language },
+  });
+}
+
+export function chatMessage({
   documentId,
   documentIds = [],
   chatId,
@@ -73,10 +123,9 @@ export async function chatMessage({
   language = "auto",
   annotations = [],
 }) {
-  const res = await fetch(`${API_BASE}/chat`, {
+  return jsonFetch("/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       document_id: documentId,
       document_ids: documentIds,
       chat_id: chatId || null,
@@ -84,30 +133,16 @@ export async function chatMessage({
       web_search: webSearch,
       language,
       annotations,
-    }),
+    },
   });
-  if (!res.ok) throw new Error(await readError(res));
-  return res.json();
 }
 
-export async function resolveSource({ url }) {
-  const res = await fetch(`${API_BASE}/resolve-source`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
-  });
-  if (!res.ok) throw new Error(await readError(res));
-  return res.json();
+export function resolveSource({ url }) {
+  return jsonFetch("/resolve-source", { method: "POST", body: { url } });
 }
 
-export async function fetchSourceContent(url) {
-  const res = await fetch(`${API_BASE}/source-content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
-  });
-  if (!res.ok) throw new Error(await readError(res));
-  return res.json();
+export function fetchSourceContent(url) {
+  return jsonFetch("/source-content", { method: "POST", body: { url } });
 }
 
 export function documentUrl(documentId) {

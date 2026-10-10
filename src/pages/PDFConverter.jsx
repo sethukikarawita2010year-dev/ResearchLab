@@ -73,53 +73,6 @@ const rowFromRecord = (rec) => {
   };
 };
 
-const initialConversions = [
-  {
-    name: "Transformer_Attention_Notes.md",
-    meta: "Markdown Schema · 3 MathJax Equations",
-    icon: `${A}/pc-md.svg`,
-    iconCls: "h-[10px] w-[16.667px]",
-    format: "MD",
-    size: "420 KB",
-    date: "Today, 11:20 AM",
-    folder: "Thesis",
-    ts: Date.parse("2026-10-09T11:20:00"),
-  },
-  {
-    name: "Model_Ablation_Study_Data.xlsx",
-    meta: "Spreadsheet · 14 Tables Synthesized",
-    icon: `${A}/pc-xlsx.svg`,
-    iconCls: "size-[15px]",
-    format: "XLSX",
-    size: "1.2 MB",
-    date: "Yesterday",
-    folder: "ML Papers",
-    ts: Date.parse("2026-10-08T12:00:00"),
-  },
-  {
-    name: "NeurIPS_Presentation_Draft.pptx",
-    meta: "Keynote Presentation · 42 Slides",
-    icon: `${A}/pc-pptx.svg`,
-    iconCls: "size-[15px]",
-    format: "PPTX",
-    size: "8.4 MB",
-    date: "Oct 24, 2024",
-    folder: "All Papers",
-    ts: Date.parse("2024-10-24T00:00:00"),
-  },
-  {
-    name: "Survey_Human_Evaluation.csv",
-    meta: "Dataset Matrix · 2,800 Cohort Records",
-    icon: `${A}/pc-csv.svg`,
-    iconCls: "size-[15px]",
-    format: "CSV",
-    size: "310 KB",
-    date: "Oct 22, 2024",
-    folder: "Biomedical AI",
-    ts: Date.parse("2024-10-22T00:00:00"),
-  },
-];
-
 export default function PDFConverter() {
   const folders = useFolders();
   const sessions = useSessions();
@@ -133,11 +86,11 @@ export default function PDFConverter() {
   const [isConverting, setIsConverting] = useState(false);
   const [convertedPdf, setConvertedPdf] = useState(null);
   const [conversionError, setConversionError] = useState(null);
-  const [selectedFolder, setSelectedFolder] = useState("ML Papers");
+  const [selectedFolder, setSelectedFolder] = useState("All Papers");
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [conversionSeconds, setConversionSeconds] = useState(null);
-  const [conversionRows, setConversionRows] = useState(initialConversions);
+  const [conversionRows, setConversionRows] = useState([]);
   const [filterMode, setFilterMode] = useState("Newest");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [transfer, setTransfer] = useState({ open: false, row: null, folder: null });

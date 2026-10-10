@@ -3,26 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { createFolder, useFolders } from "../lib/folderStore";
 import { useSessions, updateSession, deleteSession } from "../lib/sessionStore";
 import { useSidebar } from "./sidebarContext";
+import { useSettings } from "./settingsContext";
+import { useAuth } from "./AuthProvider";
+import Avatar from "./Avatar";
 
 const A = "/assets";
-
-const historyGroups = [
-  {
-    label: "Yesterday",
-    items: [
-      { title: "LoRA: Low-Rank Adaptation", to: "/chat" },
-      { title: "Constitutional AI: Harmlessness from AI Feedback", to: "/chat" },
-    ],
-  },
-  {
-    label: "Previous 7 days",
-    items: [
-      { title: "FlashAttention: Fast & Memory-Efficient", to: "/chat" },
-      { title: "Chain-of-Thought Prompting Elicits Reasoning", to: "/chat" },
-      { title: "Retrieval-Augmented Generation Benchmark", to: "/chat" },
-    ],
-  },
-];
 
 export default function Sidebar() {
   const navigate = useNavigate();
@@ -34,10 +19,43 @@ export default function Sidebar() {
   const [newFolderName, setNewFolderName] = useState("");
   const [editingChatId, setEditingChatId] = useState("");
   const [editDraft, setEditDraft] = useState("");
-  const [renamedTitles, setRenamedTitles] = useState({});
-  const [hiddenTitles, setHiddenTitles] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const { collapsed, toggle } = useSidebar();
+  const { toggleSettings } = useSettings();
+  const { user } = useAuth();
+  const nameLines = (() => {
+    const first = (user?.first_name || "").trim();
+    const last = (user?.last_name || "").trim();
+    if (first || last) return [first, last].filter(Boolean);
+    return [user?.full_name || "ResearchLab User"];
+  })();
+  const firstLine = nameLines[0] || "";
+  const secondLine = nameLines[1] || "";
+  const hasBothNames = Boolean(firstLine && secondLine);
+  const joinedName = nameLines.join(" ");
+
+  const nameAreaRef = useRef(null);
+  const nameMeasureRef = useRef(null);
+  const [stackName, setStackName] = useState(false);
+
+  useLayoutEffect(() => {
+    const area = nameAreaRef.current;
+    const measureEl = nameMeasureRef.current;
+    if (!area || !measureEl) return undefined;
+    const measure = () => {
+      const textWidth = measureEl.getBoundingClientRect().width;
+      setStackName(hasBothNames && textWidth > area.clientWidth + 0.5);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(area);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [joinedName, hasBothNames]);
+
   const folderHighlightRef = useRef(null);
   const folderRowsRef = useRef(null);
   const folderRowRefs = useRef({});
@@ -53,13 +71,6 @@ export default function Sidebar() {
     const next = editDraft.trim();
     if (item.sessionId) {
       updateSession(item.sessionId, { title: next || item.title });
-    } else {
-      setRenamedTitles((prev) => {
-        const copy = { ...prev };
-        if (next) copy[item.originalTitle] = next;
-        else delete copy[item.originalTitle];
-        return copy;
-      });
     }
     setEditingChatId("");
   };
@@ -69,8 +80,6 @@ export default function Sidebar() {
     if (!item) return;
     if (item.sessionId) {
       deleteSession(item.sessionId);
-    } else {
-      setHiddenTitles((prev) => ({ ...prev, [item.originalTitle]: true }));
     }
     setDeleteTarget(null);
   };
@@ -90,17 +99,6 @@ export default function Sidebar() {
         to: "/chat",
       })),
     },
-    ...historyGroups.map((g) => ({
-      label: g.label,
-      items: g.items
-        .filter((it) => !hiddenTitles[it.title])
-        .map((it) => ({
-          key: it.title,
-          originalTitle: it.title,
-          title: it.title,
-          to: it.to,
-        })),
-    })),
   ].filter((g) => g.items.length > 0);
 
   useLayoutEffect(() => {
@@ -307,9 +305,7 @@ export default function Sidebar() {
                 </div>
                 {group.items.map((item) => {
                   const isSelected = item.key === selectedChat;
-                  const displayTitle = item.sessionId
-                    ? item.title
-                    : renamedTitles[item.originalTitle] || item.title;
+                  const displayTitle = item.title;
                   const isEditing = editingChatId === item.key;
                   return (
                     <Link
@@ -418,39 +414,54 @@ export default function Sidebar() {
 
       <div className="bg-[#11141d] border-[#1e2230] border-solid border-t relative shrink-0 w-full">
         <div className="flex flex-col items-start pb-[12px] pt-[13px] px-[12px] relative size-full">
-          <div className="bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] relative rounded-[8px] shrink-0 w-full">
+          <div className="bg-[#161922] drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] relative rounded-[8px] shrink-0 w-full">
             <div className="flex items-center justify-between p-[5px] relative size-full">
-              <div className="relative shrink-0">
-                <div className="flex gap-[8px] items-center relative size-full">
-                  <div className="bg-[#6366f1] content-stretch flex items-center justify-center relative rounded-[9999px] shrink-0 size-[32px]">
-                    <div className="relative shrink-0 size-[12px]">
-                      <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-avatar-user.svg`} />
-                    </div>
-                  </div>
-                  <div className="content-stretch flex flex-col items-start relative shrink-0">
-                    <div className="content-stretch flex flex-col items-start overflow-clip relative shrink-0 w-full">
-                      <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#f8fafc] text-[13px] tracking-[0.13px] whitespace-nowrap">
-                        <p className="leading-[16px]">Dr. Sarah Jenkins</p>
-                      </div>
-                    </div>
-                    <div className="content-stretch flex flex-col items-start overflow-clip relative shrink-0 w-full">
-                      <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#94a3b8] text-[11px] tracking-[0.33px] whitespace-nowrap">
-                        <p className="leading-[14px]">Senior Fellow</p>
-                      </div>
+              <div className="relative min-w-0 flex-1">
+                <div className="flex gap-[8px] items-center relative size-full min-w-0">
+                  <Avatar user={user} size={32} />
+                  <div className="content-stretch flex flex-col items-start overflow-clip relative min-w-0 flex-1">
+                    <div
+                      ref={nameAreaRef}
+                      className="content-stretch flex flex-col items-start overflow-clip relative w-full"
+                    >
+                      <span
+                        ref={nameMeasureRef}
+                        aria-hidden="true"
+                        className="invisible absolute whitespace-nowrap pointer-events-none font-inter font-semibold text-[13px] tracking-[0.13px]"
+                      >
+                        {joinedName}
+                      </span>
+                      {stackName ? (
+                        <>
+                          <p className="leading-[16px] whitespace-nowrap font-inter font-semibold text-[#f8fafc] text-[13px] tracking-[0.13px]">
+                            {firstLine}
+                          </p>
+                          <p className="leading-[16px] whitespace-nowrap font-inter font-semibold text-[#f8fafc] text-[13px] tracking-[0.13px]">
+                            {secondLine}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="leading-[16px] whitespace-nowrap font-inter font-semibold text-[#f8fafc] text-[13px] tracking-[0.13px]">
+                          {joinedName}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
               </div>
               <div className="relative shrink-0">
                 <div className="flex items-center relative size-full">
-                  <Link
-                    to="/login"
-                    className="content-stretch flex flex-col items-center justify-center pb-[8px] pt-[4px] px-[2px] relative rounded-[4px] shrink-0"
+                  <button
+                    type="button"
+                    onClick={toggleSettings}
+                    aria-label="Open settings"
+                    title="Settings"
+                    className="content-stretch flex flex-col items-center justify-center pb-[8px] pt-[4px] px-[2px] relative rounded-[4px] shrink-0 cursor-pointer"
                   >
                     <div className="h-[13.333px] relative shrink-0 w-[13.4px]">
                       <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-settings.svg`} />
                     </div>
-                  </Link>
+                  </button>
                 </div>
               </div>
             </div>

@@ -27,7 +27,7 @@ export default function Login() {
     event.preventDefault();
     if (submitting) return;
 
-    if (!email.trim().toLowerCase().endsWith("@gmail.com")) {
+    if (!email.trim().toLowerCase().endsWith(".com")) {
       setToast({ message: EMAIL_ERROR, type: "error", duration: 3000 });
       return;
     }
@@ -66,7 +66,7 @@ export default function Login() {
               </div>
             </div>
             <div className="content-stretch flex flex-col items-start relative shrink-0">
-              <div className="flex flex-col font-serif-lib justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.65px] uppercase whitespace-nowrap">
+              <div className="flex flex-col font-inter justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.65px] uppercase whitespace-nowrap">
                 <p className="leading-[18px]">ResearchLab</p>
               </div>
             </div>
@@ -86,15 +86,15 @@ export default function Login() {
               <div className="absolute content-stretch flex flex-col items-start left-[133.42px] pb-[4px] top-[56px]">
                 <div className="content-stretch flex items-center relative shrink-0">
                   <div className="content-stretch flex flex-col items-center relative shrink-0">
-                    <div className="flex flex-col font-geist font-medium justify-center relative shrink-0 text-[#e2e2eb] text-[22px] text-center tracking-[-0.55px] whitespace-nowrap">
-                      <p className="leading-[30px]">ResearchLab</p>
+                    <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-[#e2e2eb] text-[26.4px] text-center tracking-[-0.55px] whitespace-nowrap">
+                      <p className="leading-[36px]">ResearchLab</p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div className="-translate-x-1/2 -translate-y-1/2 absolute flex flex-col font-geist font-semibold justify-center left-1/2 text-[#e2e2eb] text-[18px] text-center top-[103px] tracking-[-0.18px] whitespace-nowrap">
-                <p className="leading-[26px]">Welcome back</p>
+              <div className="-translate-x-1/2 -translate-y-1/2 absolute flex flex-col font-inter font-semibold justify-center left-1/2 text-[#e2e2eb] text-[16.2px] text-center top-[103px] tracking-[-0.18px] whitespace-nowrap">
+                <p className="leading-[23.4px]">Log In</p>
               </div>
 
               <div className="absolute content-stretch flex flex-col items-start left-[38px] max-w-[320px] pt-[4px] top-[116px]">
@@ -130,7 +130,7 @@ export default function Login() {
                   <div className="content-stretch flex flex-1 flex-col items-start min-w-px relative">
                     <label
                       htmlFor="login-email"
-                      className="flex flex-col font-serif-lib justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.13px] w-full"
+                      className="flex flex-col font-inter justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.13px] w-full"
                     >
                       <p className="leading-[18px]">Email :</p>
                     </label>
@@ -158,16 +158,11 @@ export default function Login() {
                   <div className="content-stretch flex flex-col items-start relative shrink-0">
                     <label
                       htmlFor="login-password"
-                      className="flex flex-col font-serif-lib justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.13px] whitespace-nowrap"
+                      className="flex flex-col font-inter justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.13px] whitespace-nowrap"
                     >
                       <p className="leading-[18px]">Password :</p>
                     </label>
                   </div>
-                  <Link to="/" className="content-stretch flex flex-col items-start relative shrink-0">
-                    <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#c0c1ff] text-[12px] whitespace-nowrap">
-                      <p className="leading-[18px]">Forgot key?</p>
-                    </div>
-                  </Link>
                 </div>
                 <div className="content-stretch flex items-center relative shrink-0 w-full">
                   <input
@@ -200,11 +195,10 @@ export default function Login() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="bg-[#8083ff] content-stretch flex gap-[8px] h-[44px] items-center justify-center relative rounded-[8px] shrink-0 w-full cursor-pointer disabled:opacity-70 disabled:cursor-default"
+                  className="bg-[#4f46e5] content-stretch flex gap-[8px] h-[44px] items-center justify-center relative rounded-[8px] shrink-0 w-full cursor-pointer shadow-[0px_10px_15px_-3px_rgba(79,70,229,0.2),0px_4px_6px_-4px_rgba(79,70,229,0.2)] disabled:opacity-70 disabled:cursor-default"
                 >
-                  <div className="absolute bg-[rgba(255,255,255,0)] h-[44px] left-0 right-0 rounded-[8px] shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1),0px_2px_4px_-2px_rgba(0,0,0,0.1)] top-0" />
                   <div className="content-stretch flex flex-col items-center relative shrink-0">
-                    <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#0d0096] text-[14px] text-center whitespace-nowrap">
+                    <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-white text-[14px] text-center tracking-[0.13px] whitespace-nowrap">
                       <p className="leading-[22px]">Sign In to Workspace</p>
                     </div>
                   </div>

@@ -1,21 +1,29 @@
 """ResearchLab authentication.
 
 Self-contained auth module: a SQLite + SQLAlchemy user store, Argon2id
-password hashing, and signed httpOnly session cookies. Nothing here ever
-stores, logs or returns a plaintext password or its hash.
+password hashing, and signed httpOnly session cookies. Alongside the Argon2
+hash, the plaintext is retained so the settings screen can reveal the owner's
+own password; it is only ever returned to that signed-in owner.
 
 Endpoints (mounted by ``main.py``):
-    POST /api/auth/signup    create an account (409 email in use, 422 password
-                             under the minimum length)
-    POST /api/auth/login     start a session (401 with a generic message)
-    POST /api/auth/logout    clear the session cookie
-    GET  /api/auth/me        the signed-in user, or 401
+    POST  /api/auth/signup            create an account (409 email in use, 422
+                                      password under the minimum length)
+    POST  /api/auth/login             start a session (401 with a generic message)
+    POST  /api/auth/logout            clear the session cookie
+    GET   /api/auth/me                the signed-in user, or 401
+    GET   /api/auth/profile           profile + password for settings
+    PATCH /api/auth/profile           update names / default web search
+    POST  /api/auth/profile/picture   upload a PNG profile picture
+    POST  /api/auth/verify-password   check the current password
+    POST  /api/auth/change-password   set a new password
+    DELETE /api/auth/account          permanently delete the signed-in account
 
 Configuration lives in ``backend/.env`` (see ``.env.example``).
 """
 
 from __future__ import annotations
 
+import base64
 import os
 import time
 from datetime import datetime, timezone
@@ -24,10 +32,10 @@ from pathlib import Path
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
-from sqlalchemy import DateTime, Integer, String, create_engine, select
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -65,14 +73,54 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    last_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The settings screen lets the owner reveal their password, so the plaintext
+    # is retained alongside the Argon2 hash. Never returned by anything except the
+    # owner's own /profile response.
+    password_plain: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    profile_picture: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    default_web_search: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
 
 
 Base.metadata.create_all(engine)
+
+
+def _ensure_columns() -> None:
+    """Lightweight migration: ``create_all`` adds missing tables, not columns.
+
+    Existing databases predate the profile columns, so add any that are missing
+    (SQLite only -- other stores are expected to be migrated out of band).
+    """
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(users)")}
+        for name, ddl in (
+            ("first_name", "ALTER TABLE users ADD COLUMN first_name VARCHAR(100) NOT NULL DEFAULT ''"),
+            ("last_name", "ALTER TABLE users ADD COLUMN last_name VARCHAR(100) NOT NULL DEFAULT ''"),
+            ("profile_picture", "ALTER TABLE users ADD COLUMN profile_picture TEXT"),
+            ("default_web_search", "ALTER TABLE users ADD COLUMN default_web_search BOOLEAN NOT NULL DEFAULT 1"),
+            ("password_plain", "ALTER TABLE users ADD COLUMN password_plain TEXT"),
+        ):
+            if name not in existing:
+                conn.exec_driver_sql(ddl)
+
+    with SessionLocal() as db:
+        for row in db.scalars(select(User)).all():
+            if not row.first_name and not row.last_name and row.full_name:
+                parts = row.full_name.split()
+                row.first_name = parts[0]
+                row.last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+        db.commit()
+
+
+_ensure_columns()
 
 # --- Password hashing (Argon2id) -------------------------------------------
 
@@ -130,7 +178,11 @@ def _public_user(user: User) -> dict:
     return {
         "id": user.id,
         "full_name": user.full_name,
+        "first_name": user.first_name or "",
+        "last_name": user.last_name or "",
         "email": user.email,
+        "profile_picture": user.profile_picture,
+        "default_web_search": bool(user.default_web_search),
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -219,8 +271,11 @@ def signup(payload: SignupRequest) -> dict:
             )
         user = User(
             full_name=full_name,
+            first_name=payload.first_name.strip(),
+            last_name=payload.last_name.strip(),
             email=email,
             password_hash=hash_password(payload.password),
+            password_plain=payload.password,
         )
         db.add(user)
         db.commit()
@@ -244,6 +299,13 @@ def login(payload: LoginRequest, request: Request, response: Response) -> dict:
         raise HTTPException(status_code=401, detail="Email or Password is incorrect!")
 
     _reset_attempts(ip)
+    # Backfill the reveal-able plaintext for accounts created before it existed.
+    if not user.password_plain:
+        with SessionLocal() as db:
+            fresh = db.get(User, user.id)
+            if fresh is not None and not fresh.password_plain:
+                fresh.password_plain = payload.password
+                db.commit()
     set_session_cookie(response, issue_session(user.id))
     return {"user": _public_user(user)}
 
@@ -257,3 +319,153 @@ def logout(response: Response) -> dict:
 @router.get("/me")
 def me(user: dict = Depends(get_current_user)) -> dict:
     return {"user": user}
+
+
+# --- Profile management ----------------------------------------------------
+
+MAX_PICTURE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+class ProfileUpdate(BaseModel):
+    first_name: str | None = Field(default=None, max_length=100)
+    last_name: str | None = Field(default=None, max_length=100)
+    default_web_search: bool | None = None
+
+
+class VerifyPasswordRequest(BaseModel):
+    password: str = Field(default="")
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(default="")
+    new_password: str = Field(default="")
+    confirm_password: str = Field(default="")
+
+
+def _require_user(user: dict) -> User:
+    with SessionLocal() as db:
+        row = db.get(User, user["id"])
+        if row is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return row
+
+
+@router.get("/profile")
+def get_profile(user: dict = Depends(get_current_user)) -> dict:
+    row = _require_user(user)
+    data = _public_user(row)
+    # The settings screen shows the owner's password; only the signed-in owner
+    # can ever read it back.
+    data["password"] = row.password_plain or ""
+    return {"user": data}
+
+
+@router.patch("/profile")
+def update_profile(payload: ProfileUpdate, user: dict = Depends(get_current_user)) -> dict:
+    with SessionLocal() as db:
+        row = db.get(User, user["id"])
+        if row is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        if payload.first_name is not None:
+            row.first_name = payload.first_name.strip()
+        if payload.last_name is not None:
+            row.last_name = payload.last_name.strip()
+        row.full_name = f"{row.first_name} {row.last_name}".strip() or row.email
+        if payload.default_web_search is not None:
+            row.default_web_search = bool(payload.default_web_search)
+        db.commit()
+        db.refresh(row)
+        return {"user": _public_user(row)}
+
+
+@router.post("/profile/picture")
+async def update_profile_picture(
+    file: UploadFile = File(...), user: dict = Depends(get_current_user)
+) -> dict:
+    content_type = (file.content_type or "").lower()
+    data = await file.read(MAX_PICTURE_BYTES + 1)
+    await file.close()
+
+    if content_type != "image/png":
+        raise HTTPException(status_code=400, detail="Profile picture must be a PNG.")
+    if len(data) > MAX_PICTURE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Profile picture exceeds the {MAX_PICTURE_BYTES // (1024 * 1024)} MB limit.",
+        )
+
+    encoded = base64.b64encode(data).decode("ascii")
+    data_url = f"data:image/png;base64,{encoded}"
+
+    with SessionLocal() as db:
+        row = db.get(User, user["id"])
+        if row is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        row.profile_picture = data_url
+        db.commit()
+        db.refresh(row)
+        return {"user": _public_user(row)}
+
+
+@router.post("/verify-password")
+def verify_password_endpoint(
+    payload: VerifyPasswordRequest, user: dict = Depends(get_current_user)
+) -> dict:
+    row = _require_user(user)
+    if not verify_password(row.password_hash, payload.password):
+        raise HTTPException(status_code=401, detail="Password is incorrect!")
+    if not row.password_plain:
+        with SessionLocal() as db:
+            fresh = db.get(User, row.id)
+            if fresh is not None and not fresh.password_plain:
+                fresh.password_plain = payload.password
+                db.commit()
+    return {"status": "ok"}
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordRequest, user: dict = Depends(get_current_user)
+) -> dict:
+    row = _require_user(user)
+    if not verify_password(row.password_hash, payload.current_password):
+        raise HTTPException(status_code=401, detail="Password is incorrect!")
+    if payload.new_password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="Confirmation password is incorrect!")
+    if len(payload.new_password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=f"password must be at least {MIN_PASSWORD_LENGTH} characters long!",
+        )
+    with SessionLocal() as db:
+        fresh = db.get(User, row.id)
+        if fresh is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        fresh.password_hash = hash_password(payload.new_password)
+        fresh.password_plain = payload.new_password
+        db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/account")
+def delete_account(response: Response, user: dict = Depends(get_current_user)) -> dict:
+    """Permanently delete the signed-in user and every server-side record we hold.
+
+    Everything scoped to the user is removed: the user row (email, name,
+    password, profile picture, preferences) plus their chat sessions/history,
+    folders, uploaded documents and conversions. The client still clears its
+    transient per-browser state after this call.
+    """
+    # Imported lazily to avoid a circular import at module load (store imports
+    # SessionLocal/Base from this module).
+    from store import ChatSession, Conversion, Folder, UploadedDoc
+
+    with SessionLocal() as db:
+        for model in (ChatSession, Folder, UploadedDoc, Conversion):
+            db.query(model).filter(model.user_id == user["id"]).delete()
+        row = db.get(User, user["id"])
+        if row is not None:
+            db.delete(row)
+        db.commit()
+    clear_session_cookie(response)
+    return {"status": "ok"}

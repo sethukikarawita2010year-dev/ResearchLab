@@ -58,7 +58,7 @@ export default function Register() {
       return;
     }
 
-    if (!email.trim().toLowerCase().endsWith("@gmail.com")) {
+    if (!email.trim().toLowerCase().endsWith(".com")) {
       setToast({ message: EMAIL_ERROR, type: "error", duration: 3000 });
       return;
     }
@@ -109,7 +109,7 @@ export default function Register() {
               </div>
             </div>
             <div className="content-stretch flex flex-col items-start relative shrink-0">
-              <div className="flex flex-col font-serif-lib justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.65px] uppercase whitespace-nowrap">
+              <div className="flex flex-col font-inter justify-center relative shrink-0 text-[#e2e2eb] text-[13px] tracking-[0.65px] uppercase whitespace-nowrap">
                 <p className="leading-[18px]">ResearchLab</p>
               </div>
             </div>
@@ -126,7 +126,7 @@ export default function Register() {
           <div className="content-stretch flex flex-col items-center max-w-[560px] pb-[12px] relative shrink-0 w-[560px]">
             <div className="content-stretch flex flex-col items-start pb-[20px] relative shrink-0">
               <div className="content-stretch flex flex-col items-center relative shrink-0">
-                <div className="flex flex-col font-geist font-semibold justify-center relative shrink-0 text-[#e2e2eb] text-[28px] text-center tracking-[-0.7px] whitespace-nowrap">
+                <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#e2e2eb] text-[28px] text-center tracking-[-0.7px] whitespace-nowrap">
                   <p className="leading-[36px]">Create your ResearchLab account</p>
                 </div>
                 <div className="content-stretch flex flex-col items-start max-w-[430px] pt-[6px] relative shrink-0">
@@ -244,7 +244,7 @@ export default function Register() {
                       </label>
                     </div>
                     <div className="content-stretch flex flex-col items-start relative shrink-0">
-                      <div className="flex flex-col font-serif-lib justify-center relative shrink-0 text-[#908fa0] text-[11px] tracking-[0.22px] whitespace-nowrap">
+                      <div className="flex flex-col font-inter justify-center relative shrink-0 text-[#908fa0] text-[11px] tracking-[0.22px] whitespace-nowrap">
                         <p className="leading-[16px]">Min. 12 characters</p>
                       </div>
                     </div>
@@ -258,7 +258,7 @@ export default function Register() {
                       autoComplete="new-password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="bg-[#191b22] flex flex-1 flex-col items-start min-w-px overflow-clip px-[40px] py-[10px] rounded-[8px] w-full font-serif-lib text-[14px] text-[#e2e2eb] outline-none border-0"
+                      className="bg-[#191b22] flex flex-1 flex-col items-start min-w-px overflow-clip px-[40px] py-[10px] rounded-[8px] w-full font-inter text-[14px] text-[#e2e2eb] outline-none border-0"
                     />
                     <div className="absolute h-[15.75px] left-[15px] top-[12.75px] w-[12px] pointer-events-none">
                       <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgIconLock} />
@@ -295,11 +295,10 @@ export default function Register() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="bg-[#c0c1ff] content-stretch flex gap-[8px] items-center justify-center px-[20px] py-[12px] relative rounded-[8px] shrink-0 w-full cursor-pointer disabled:opacity-70 disabled:cursor-default"
+                    className="bg-[#4f46e5] content-stretch flex gap-[8px] items-center justify-center px-[20px] py-[12px] relative rounded-[8px] shrink-0 w-full cursor-pointer shadow-[0px_10px_15px_-3px_rgba(79,70,229,0.2),0px_4px_6px_-4px_rgba(79,70,229,0.2)] disabled:opacity-70 disabled:cursor-default"
                   >
-                    <div className="absolute bg-[rgba(255,255,255,0)] inset-0 rounded-[8px] shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.1),0px_4px_6px_-4px_rgba(0,0,0,0.1)]" />
                     <div className="content-stretch flex flex-col items-center relative shrink-0">
-                      <div className="flex flex-col font-geist font-semibold justify-center relative shrink-0 text-[#1000a9] text-[18px] text-center tracking-[-0.18px] whitespace-nowrap">
+                      <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-white text-[14px] text-center tracking-[0.13px] whitespace-nowrap">
                         <p className="leading-[26px]">Create ResearchLab Account</p>
                       </div>
                     </div>
@@ -319,7 +318,7 @@ export default function Register() {
                       <p className="leading-[18px]">Already have an active lab profile?</p>
                     </div>
                   </div>
-                  <Link to="/" className="content-stretch flex flex-col items-start relative shrink-0">
+                  <Link to="/login" className="content-stretch flex flex-col items-start relative shrink-0">
                     <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-[#c0c1ff] text-[12px] whitespace-nowrap">
                       <p className="leading-[18px] underline decoration-[1px] decoration-solid">Sign In</p>
                     </div>

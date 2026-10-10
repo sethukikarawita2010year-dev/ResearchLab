@@ -7,6 +7,7 @@ import RangeMarks from "../components/RangeMarks";
 import { analyzePaper, chatMessage, uploadPdf, resolveSource, documentUrl, fetchSourceContent } from "../lib/api";
 import { selectionOffsets, selectionRect, clearSelection } from "../lib/domText";
 import { useSidebar } from "../components/sidebarContext";
+import { useAuth } from "../components/AuthProvider";
 import {
   createSessionRecord,
   getSession,
@@ -486,6 +487,7 @@ function EmptyState({ pdfName }) {
 
 export default function Chat() {
   const { collapsed, setCollapsed } = useSidebar();
+  const { user } = useAuth();
   const location = useLocation();
   const sessions = useSessions();
   const [documentId, setDocumentId] = useState(
@@ -509,7 +511,7 @@ export default function Chat() {
       "Attention_Vaswani_2017.pdf",
   );
   const [messages, setMessages] = useState([]);
-  const [webSearch, setWebSearch] = useState(false);
+  const [webSearch, setWebSearch] = useState(() => Boolean(user?.default_web_search));
   const [sourcesOpen, setSourcesOpen] = useState(true);
   const [viewer, setViewer] = useState(null);
   const [focus, setFocus] = useState(null);
@@ -533,7 +535,7 @@ export default function Chat() {
   const [sourceError, setSourceError] = useState("");
   const sourceInputRef = useRef(null);
   const sessionIdRef = useRef(sessionId);
-  const noteKey = sessionId ? `researchlab.notepad.${sessionId}` : null;
+  const noteSessionRef = useRef(null);
 
   const currentSession = useMemo(
     () => sessions.find((s) => s.id === sessionId) || null,
@@ -709,6 +711,9 @@ export default function Chat() {
       annotationsRef.current = [];
       setAnnotations([]);
       if (!rec) {
+        const def = Boolean(user?.default_web_search);
+        webSearchRef.current = def;
+        setWebSearch(def);
         createSessionRecord({
           id: sid,
           title: state.title || name,
@@ -891,30 +896,23 @@ export default function Chat() {
   };
 
   useEffect(() => {
-    if (!noteKey) {
+    if (!sessionId) {
+      noteSessionRef.current = null;
       setNoteText("");
       return;
     }
-    try {
-      setNoteText(localStorage.getItem(noteKey) || "");
-    } catch {
-      setNoteText("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noteKey]);
+    setNoteText(getSession(sessionId)?.notepad || "");
+    noteSessionRef.current = sessionId;
+  }, [sessionId]);
 
   useEffect(() => {
-    if (!noteKey) return undefined;
+    if (!sessionId || noteSessionRef.current !== sessionId) return undefined;
     clearTimeout(noteSaveRef.current);
     noteSaveRef.current = setTimeout(() => {
-      try {
-        localStorage.setItem(noteKey, noteText);
-      } catch {
-        /* storage full or unavailable */
-      }
+      updateSession(sessionId, { notepad: noteText });
     }, 400);
     return () => clearTimeout(noteSaveRef.current);
-  }, [noteText, noteKey]);
+  }, [noteText, sessionId]);
 
   const exportNotes = () => {
     const safe = (headerTitle || pdfName || "chat").replace(/[\\/:*?"<>|]/g, "").trim() || "chat";
@@ -932,13 +930,7 @@ export default function Chat() {
 
   const clearNotes = () => {
     setNoteText("");
-    if (noteKey) {
-      try {
-        localStorage.setItem(noteKey, "");
-      } catch {
-        /* ignore */
-      }
-    }
+    if (sessionId) updateSession(sessionId, { notepad: "" });
     setConfirmClearOpen(false);
     notify("Notepad cleared");
   };

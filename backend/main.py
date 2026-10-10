@@ -35,13 +35,19 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from conversion import ConversionError, convert_to_pdf
-from auth import router as auth_router
+from auth import get_current_user, router as auth_router, SessionLocal
+from store import (
+    Conversion,
+    UploadedDoc,
+    router as store_router,
+)
 import llm
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -78,65 +84,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-
-# In-memory stores (swap for a database later).
-SESSIONS: dict[str, dict] = {}
-
-# Uploaded-PDF metadata is persisted to a small JSON file so uploaded documents
-# stay openable in the split viewer after a backend restart (the PDF bytes live
-# on disk in ``uploads/``; only this metadata was previously lost).
-UPLOADS_FILE = BASE_DIR / "uploads.json"
-
-
-def _load_uploads() -> dict[str, dict]:
-    if not UPLOADS_FILE.exists():
-        return {}
-    try:
-        raw = json.loads(UPLOADS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return {str(k): v for k, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else {}
-
-
-def _save_uploads() -> None:
-    try:
-        UPLOADS_FILE.write_text(json.dumps(UPLOADS, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError:
-        pass
-
-
-UPLOADS: dict[str, dict] = _load_uploads()
-
-# Conversions are persisted to a small JSON file so the Recent Conversions
-# table survives backend restarts (no external database required).
-CONVERSIONS_FILE = BASE_DIR / "conversions.json"
-
-
-def _load_conversions() -> dict[str, dict]:
-    if not CONVERSIONS_FILE.exists():
-        return {}
-    try:
-        raw = json.loads(CONVERSIONS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if isinstance(raw, dict):
-        return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
-    if isinstance(raw, list):
-        return {str(item.get("id")): item for item in raw if isinstance(item, dict) and item.get("id")}
-    return {}
-
-
-def _save_conversions() -> None:
-    try:
-        CONVERSIONS_FILE.write_text(
-            json.dumps(CONVERSIONS, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except OSError:
-        pass
-
-
-CONVERSIONS: dict[str, dict] = _load_conversions()
+app.include_router(store_router)
 
 # Cached readable copies of web sources, keyed by normalised URL. Persisted so
 # the split-screen viewer and citation highlights keep working across restarts
@@ -165,14 +113,6 @@ def _save_sources() -> None:
 
 
 SOURCES: dict[str, dict] = _load_sources()
-
-
-class SessionCreate(BaseModel):
-    title: str = Field(default="New research session", min_length=1, max_length=120)
-
-
-class SessionUpdate(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
 
 
 class AnalyzeRequest(BaseModel):
@@ -223,26 +163,10 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/api/sessions", status_code=201)
-def create_session(payload: SessionCreate) -> dict:
-    session_id = uuid.uuid4().hex
-    session = {"id": session_id, "title": payload.title.strip(), "created_at": _now()}
-    SESSIONS[session_id] = session
-    return session
-
-
-@app.patch("/api/sessions/{session_id}")
-def rename_session(session_id: str, payload: SessionUpdate) -> dict:
-    session = SESSIONS.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    session["title"] = payload.title.strip()
-    session["updated_at"] = _now()
-    return session
-
-
 @app.post("/api/upload", status_code=201)
-async def upload_pdf(file: UploadFile = File(...)) -> dict:
+async def upload_pdf(
+    file: UploadFile = File(...), user: dict = Depends(get_current_user)
+) -> dict:
     filename = (file.filename or "document.pdf").strip()
     content_type = (file.content_type or "").lower()
 
@@ -270,15 +194,48 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict:
         "content_type": "application/pdf",
         "uploaded_at": _now(),
     }
-    UPLOADS[upload_id] = record
-    _save_uploads()
+    with SessionLocal() as db:
+        db.add(
+            UploadedDoc(
+                id=upload_id,
+                user_id=user["id"],
+                filename=filename,
+                size=len(data),
+                content_type="application/pdf",
+                uploaded_at=record["uploaded_at"],
+            )
+        )
+        db.commit()
     return record
+
+
+@app.get("/api/uploads")
+def list_uploads(user: dict = Depends(get_current_user)) -> dict:
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(UploadedDoc)
+            .where(UploadedDoc.user_id == user["id"])
+            .order_by(UploadedDoc.uploaded_at.desc())
+        ).all()
+        return {
+            "uploads": [
+                {
+                    "id": r.id,
+                    "filename": r.filename,
+                    "size": r.size,
+                    "content_type": r.content_type,
+                    "uploaded_at": r.uploaded_at,
+                }
+                for r in rows
+            ]
+        }
 
 
 @app.post("/api/convert", status_code=201)
 async def convert_file(
     file: UploadFile = File(...),
     folder: str = Form("All Papers"),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     filename = (file.filename or "document").strip()
     data = await file.read(MAX_FILE_SIZE + 1)
@@ -302,62 +259,82 @@ async def convert_file(
         "download_url": f"/convert/{conversion_id}/download",
         "created_at": _now(),
     }
-    CONVERSIONS[conversion_id] = record
-    _save_conversions()
+    with SessionLocal() as db:
+        db.add(
+            Conversion(
+                id=conversion_id,
+                user_id=user["id"],
+                filename=filename,
+                pdf_filename=pdf_filename,
+                size=len(pdf_bytes),
+                folder=record["folder"],
+                created_at=record["created_at"],
+            )
+        )
+        db.commit()
     return record
 
 
 @app.get("/api/conversions")
-def list_conversions() -> dict:
-    items = sorted(
-        CONVERSIONS.values(),
-        key=lambda r: r.get("created_at", ""),
-        reverse=True,
-    )
+def list_conversions(user: dict = Depends(get_current_user)) -> dict:
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(Conversion)
+            .where(Conversion.user_id == user["id"])
+            .order_by(Conversion.created_at.desc())
+        ).all()
+        items = [
+            {
+                "id": r.id,
+                "filename": r.filename,
+                "pdf_filename": r.pdf_filename,
+                "size": r.size,
+                "folder": r.folder,
+                "download_url": f"/convert/{r.id}/download",
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
     return {"conversions": items}
 
 
 @app.get("/api/convert/{conversion_id}/download")
-def download_conversion(conversion_id: str) -> FileResponse:
-    record = CONVERSIONS.get(conversion_id)
+def download_conversion(
+    conversion_id: str, user: dict = Depends(get_current_user)
+) -> FileResponse:
     path = CONVERTED_DIR / f"{conversion_id}.pdf"
-    if record is None or not path.exists():
-        raise HTTPException(status_code=404, detail="Conversion not found")
-    return FileResponse(path, media_type="application/pdf", filename=record["pdf_filename"])
+    with SessionLocal() as db:
+        record = db.get(Conversion, conversion_id)
+        if record is None or record.user_id != user["id"] or not path.exists():
+            raise HTTPException(status_code=404, detail="Conversion not found")
+        pdf_filename = record.pdf_filename
+    return FileResponse(path, media_type="application/pdf", filename=pdf_filename)
 
 
-def _resolve_upload(upload_id: str) -> Path:
+def _resolve_upload(upload_id: str, user_id: int) -> Path:
     path = UPLOAD_DIR / f"{upload_id}.pdf"
-    if not path.exists():
+    with SessionLocal() as db:
+        record = db.get(UploadedDoc, upload_id)
+    if record is None or record.user_id != user_id or not path.exists():
         raise HTTPException(status_code=404, detail="Document not found. Upload the PDF first.")
-    # The metadata dict may be missing an entry if the PDF predates metadata
-    # persistence; recover a minimal record so the document stays openable.
-    if upload_id not in UPLOADS:
-        UPLOADS[upload_id] = {
-            "id": upload_id,
-            "filename": path.name,
-            "size": path.stat().st_size,
-            "content_type": "application/pdf",
-            "uploaded_at": _now(),
-        }
-        _save_uploads()
     return path
 
 
 @app.get("/api/document/{document_id}")
-def get_document(document_id: str) -> FileResponse:
-    path = _resolve_upload(document_id)
-    record = UPLOADS.get(document_id, {})
+def get_document(document_id: str, user: dict = Depends(get_current_user)) -> FileResponse:
+    path = _resolve_upload(document_id, user["id"])
+    with SessionLocal() as db:
+        record = db.get(UploadedDoc, document_id)
     return FileResponse(
         path,
         media_type="application/pdf",
-        filename=record.get("filename") or path.name,
+        filename=(record.filename if record else None) or path.name,
     )
 
 
 @app.post("/api/analyze")
-def analyze_paper(payload: AnalyzeRequest) -> dict:
-    path = _resolve_upload(payload.document_id)
+def analyze_paper(payload: AnalyzeRequest, user: dict = Depends(get_current_user)) -> dict:
+    path = _resolve_upload(payload.document_id, user["id"])
     try:
         return llm.structured_summary(payload.document_id, path, payload.language)
     except RuntimeError as exc:
@@ -367,8 +344,8 @@ def analyze_paper(payload: AnalyzeRequest) -> dict:
 
 
 @app.post("/api/chat")
-def chat(payload: ChatRequest) -> dict:
-    path = _resolve_upload(payload.document_id)
+def chat(payload: ChatRequest, user: dict = Depends(get_current_user)) -> dict:
+    path = _resolve_upload(payload.document_id, user["id"])
 
     docs: list[dict] = []
     seen: set[str] = set()
@@ -378,18 +355,19 @@ def chat(payload: ChatRequest) -> dict:
             return
         seen.add(doc_id)
         try:
-            doc_path = _resolve_upload(doc_id)
+            doc_path = _resolve_upload(doc_id, user["id"])
         except HTTPException:
             # A stale/unavailable secondary document should not fail the whole
             # turn; only the primary document is mandatory.
             if required:
                 raise
             return
-        record = UPLOADS.get(doc_id, {})
+        with SessionLocal() as db:
+            record = db.get(UploadedDoc, doc_id)
         docs.append(
             {
                 "id": doc_id,
-                "filename": record.get("filename") or doc_path.name,
+                "filename": (record.filename if record else None) or doc_path.name,
                 "path": doc_path,
             }
         )

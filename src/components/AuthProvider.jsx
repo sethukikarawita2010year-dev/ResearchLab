@@ -1,10 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import {
+  deleteAccount as apiDeleteAccount,
   login as apiLogin,
   logout as apiLogout,
   me as apiMe,
   signup as apiSignup,
 } from "../lib/authApi";
+import { clearSessions, hydrateSessions } from "../lib/sessionStore";
+import { clearFolders, hydrateFolders } from "../lib/folderStore";
 
 const AuthContext = createContext(null);
 
@@ -26,6 +29,16 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (user) {
+      hydrateSessions();
+      hydrateFolders();
+    } else {
+      clearSessions();
+      clearFolders();
+    }
+  }, [user]);
+
   const signIn = useCallback(async (credentials) => {
     const data = await apiLogin(credentials);
     setUser(data.user);
@@ -45,8 +58,19 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const updateUser = useCallback((patch) => {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
+  const deleteAccount = useCallback(async () => {
+    await apiDeleteAccount();
+    setUser(null);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, register, signOut }}>
+    <AuthContext.Provider
+      value={{ user, loading, signIn, register, signOut, updateUser, deleteAccount }}
+    >
       {children}
     </AuthContext.Provider>
   );

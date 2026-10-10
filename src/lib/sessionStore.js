@@ -1,30 +1,30 @@
 import { useSyncExternalStore } from "react";
 
-const KEY = "researchlab.sessions";
+import {
+  deleteSessionApi,
+  listSessions,
+  saveSession,
+} from "./api";
 
-function load() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(KEY) || "[]");
-    if (!Array.isArray(raw)) return [];
-    return raw.filter((s) => s && typeof s.id === "string");
-  } catch {
-    return [];
-  }
-}
-
-let sessions = load();
+let sessions = [];
 const listeners = new Set();
-
-function persist() {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(sessions));
-  } catch {
-    /* storage full or unavailable */
-  }
-}
+const timers = new Map();
 
 function emit() {
   listeners.forEach((fn) => fn());
+}
+
+function schedulePersist(id, delay = 400) {
+  if (!id) return;
+  if (timers.has(id)) clearTimeout(timers.get(id));
+  timers.set(
+    id,
+    setTimeout(() => {
+      timers.delete(id);
+      const rec = getSession(id);
+      if (rec) saveSession(rec).catch(() => {});
+    }, delay),
+  );
 }
 
 export function getSessions() {
@@ -34,6 +34,22 @@ export function getSessions() {
 export function getSession(id) {
   if (!id) return null;
   return sessions.find((s) => s.id === id) || null;
+}
+
+export async function hydrateSessions() {
+  try {
+    sessions = await listSessions();
+    emit();
+  } catch {
+    /* keep whatever is cached */
+  }
+}
+
+export function clearSessions() {
+  sessions = [];
+  timers.forEach((t) => clearTimeout(t));
+  timers.clear();
+  emit();
 }
 
 export function createSessionRecord(record) {
@@ -49,11 +65,13 @@ export function createSessionRecord(record) {
     notepad: "",
     extraDocs: [],
     webSources: [],
+    annotations: [],
+    webSearch: true,
     ...record,
   };
   sessions = [full, ...sessions];
-  persist();
   emit();
+  schedulePersist(full.id, 0);
   return full;
 }
 
@@ -73,15 +91,15 @@ export function updateSession(id, patch) {
       ...sessions,
     ];
   }
-  persist();
   emit();
+  schedulePersist(id);
 }
 
 export function deleteSession(id) {
   if (!id) return;
   sessions = sessions.filter((s) => s.id !== id);
-  persist();
   emit();
+  deleteSessionApi(id).catch(() => {});
 }
 
 function subscribe(listener) {
