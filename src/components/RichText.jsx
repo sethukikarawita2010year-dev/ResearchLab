@@ -12,14 +12,15 @@ function hostOf(url) {
   }
 }
 
-function CitationPill({ label, web, onClick, active }) {
+function CitationPill({ label, web, onClick, active, dim }) {
+  const clickable = Boolean(onClick) && !dim;
   return (
     <span
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onClick={onClick}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? onClick : undefined}
       onKeyDown={
-        onClick
+        clickable
           ? (e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
@@ -28,9 +29,11 @@ function CitationPill({ label, web, onClick, active }) {
             }
           : undefined
       }
+      title={dim ? "This source can't be opened in the split view" : undefined}
       className={`bg-[rgba(30,27,75,0.7)] border border-solid content-stretch inline-flex items-center gap-[6px] px-[9px] py-[2px] relative rounded-full align-middle mx-[2px] my-[1px] transition-colors ${
-        onClick ? "cursor-pointer hover:bg-[rgba(49,46,129,0.85)] hover:border-[#6366f1]" : ""
+        clickable ? "cursor-pointer hover:bg-[rgba(49,46,129,0.85)] hover:border-[#6366f1]" : ""
       } ${active ? "border-[#6366f1] bg-[rgba(49,46,129,0.85)]" : "border-[rgba(67,56,202,0.5)]"}`}
+      style={dim ? { filter: "brightness(0.6)" } : undefined}
     >
       <img
         alt=""
@@ -44,13 +47,14 @@ function CitationPill({ label, web, onClick, active }) {
   );
 }
 
-function CitationToken({ bracket, citations, onCitation }) {
+function CitationToken({ bracket, citations, onCitation, openableFor }) {
   const b = (bracket || "").trim();
   const list = citations || [];
 
   const cited = list.find((c) => c && String(c.raw || "").trim() === b);
   if (cited) {
     const web = cited.type === "web" || cited.source_type === "web";
+    const openable = openableFor ? openableFor(cited) !== false : true;
     const label = web
       ? cited.title || hostOf(cited.url || "")
       : [
@@ -64,6 +68,7 @@ function CitationToken({ bracket, citations, onCitation }) {
         <CitationPill
           label={label}
           web={web}
+          dim={!openable}
           onClick={onCitation ? () => onCitation(cited) : undefined}
         />
       );
@@ -98,12 +103,14 @@ function CitationToken({ bracket, citations, onCitation }) {
     const webCitations = list.filter((c) => c && c.type === "web");
     const hit = webCitations.find((c) => c.marker === n) || webCitations[n - 1];
     if (hit) {
+      const openable = openableFor ? openableFor(hit) !== false : true;
       const label = hit.title || hostOf(hit.url || "");
       if (label) {
         return (
           <CitationPill
             label={label}
             web
+            dim={!openable}
             onClick={onCitation ? () => onCitation(hit) : undefined}
           />
         );
@@ -114,7 +121,7 @@ function CitationToken({ bracket, citations, onCitation }) {
   return <span>[{bracket}]</span>;
 }
 
-function Inline({ text, citations, onCitation }) {
+function Inline({ text, citations, onCitation, openableFor }) {
   const parts = [];
   let last = 0;
   let key = 0;
@@ -163,7 +170,12 @@ function Inline({ text, citations, onCitation }) {
       node = <em className="italic">{content}</em>;
     } else if (bracket != null) {
       node = (
-        <CitationToken bracket={bracket} citations={citations} onCitation={onCitation} />
+        <CitationToken
+          bracket={bracket}
+          citations={citations}
+          onCitation={onCitation}
+          openableFor={openableFor}
+        />
       );
     }
 
@@ -174,7 +186,7 @@ function Inline({ text, citations, onCitation }) {
   return parts;
 }
 
-function Blocks({ text, citations, onCitation }) {
+function Blocks({ text, citations, onCitation, openableFor }) {
   const lines = String(text).split("\n");
   const blocks = [];
   let i = 0;
@@ -247,7 +259,7 @@ function Blocks({ text, citations, onCitation }) {
               key={index}
               className="font-semibold text-[#f1f5f9] text-[15px] tracking-[-0.15px] leading-[24px] w-full"
             >
-              <Inline text={block.text} citations={citations} onCitation={onCitation} />
+              <Inline text={block.text} citations={citations} onCitation={onCitation} openableFor={openableFor} />
             </h4>
           );
         }
@@ -256,7 +268,7 @@ function Blocks({ text, citations, onCitation }) {
             <ul key={index} className="flex flex-col gap-[3px] list-disc pl-[22px] w-full">
               {block.items.map((item, itemIndex) => (
                 <li key={itemIndex} className="pl-[2px]">
-                  <Inline text={item} citations={citations} onCitation={onCitation} />
+                  <Inline text={item} citations={citations} onCitation={onCitation} openableFor={openableFor} />
                 </li>
               ))}
             </ul>
@@ -267,7 +279,7 @@ function Blocks({ text, citations, onCitation }) {
             <ol key={index} className="flex flex-col gap-[3px] list-decimal pl-[22px] w-full">
               {block.items.map((item, itemIndex) => (
                 <li key={itemIndex} className="pl-[2px]">
-                  <Inline text={item} citations={citations} onCitation={onCitation} />
+                  <Inline text={item} citations={citations} onCitation={onCitation} openableFor={openableFor} />
                 </li>
               ))}
             </ol>
@@ -275,7 +287,7 @@ function Blocks({ text, citations, onCitation }) {
         }
         return (
           <p key={index} className="w-full">
-            <Inline text={block.text} citations={citations} onCitation={onCitation} />
+            <Inline text={block.text} citations={citations} onCitation={onCitation} openableFor={openableFor} />
           </p>
         );
       })}
@@ -283,6 +295,6 @@ function Blocks({ text, citations, onCitation }) {
   );
 }
 
-export default function RichText({ text, citations, onCitation }) {
-  return <Blocks text={text} citations={citations} onCitation={onCitation} />;
+export default function RichText({ text, citations, onCitation, openableFor }) {
+  return <Blocks text={text} citations={citations} onCitation={onCitation} openableFor={openableFor} />;
 }

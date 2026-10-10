@@ -72,8 +72,8 @@ body {
   background: rgba(99, 102, 241, 0.16);
   border: 1px solid #6366f1;
   box-shadow:
-    0 0 10px rgba(99, 102, 241, 0.55),
-    0 0 2px rgba(99, 102, 241, 0.9);
+    0 0 10px rgba(99, 102, 241, 0.33),
+    0 0 2px rgba(99, 102, 241, 0.54);
 }
 .rl-mark-citation {
   background: rgba(250, 204, 21, 0.32);

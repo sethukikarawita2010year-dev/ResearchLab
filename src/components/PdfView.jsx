@@ -3,14 +3,16 @@ import pdfjsLib from "../lib/pdfjs";
 import { selectionOffsets, selectionRect } from "../lib/domText";
 import RangeMarks from "./RangeMarks";
 
-function PdfPage({ doc, number, focus, onAnnotate, annotations, revision = 0 }) {
+function PdfPage({ doc, number, focus, size, onAnnotate, annotations, revision = 0 }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const textLayerRef = useRef(null);
+  const scrolledRef = useRef(null);
   const [visible, setVisible] = useState(false);
-  const [size, setSize] = useState(null);
   const [rendered, setRendered] = useState(0);
   const [flash, setFlash] = useState(null);
+
+  const isTarget = focus?.page === number;
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -31,7 +33,7 @@ function PdfPage({ doc, number, focus, onAnnotate, annotations, revision = 0 }) 
   }, []);
 
   useEffect(() => {
-    if (!visible || !doc) return undefined;
+    if ((!visible && !isTarget) || !doc || !size) return undefined;
     let cancelled = false;
     let renderTask = null;
     let textLayer = null;
@@ -39,11 +41,9 @@ function PdfPage({ doc, number, focus, onAnnotate, annotations, revision = 0 }) 
     (async () => {
       const page = await doc.getPage(number);
       if (cancelled) return;
-      const containerWidth = wrapRef.current?.parentElement?.clientWidth || 760;
       const unscaled = page.getViewport({ scale: 1 });
-      const scale = Math.min(2, Math.max(0.35, (containerWidth - 32) / unscaled.width));
+      const scale = size.width / unscaled.width;
       const viewport = page.getViewport({ scale });
-      setSize({ width: viewport.width, height: viewport.height });
 
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -95,27 +95,30 @@ function PdfPage({ doc, number, focus, onAnnotate, annotations, revision = 0 }) 
         /* ignore */
       }
     };
-  }, [visible, doc, number]);
+  }, [visible, isTarget, doc, number, size]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (focus?.page !== number || !size) return;
+    const key = `${number}-${focus.nonce || focus.page}`;
+    if (scrolledRef.current === key) return;
     const el = wrapRef.current;
-    if (focus?.page === number && el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (el) {
+      scrolledRef.current = key;
+      el.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
     }
-  }, [focus, number, visible]);
+  }, [focus, number, size]);
 
   useEffect(() => {
     if (!rendered || focus?.page !== number || !focus?.passage) return undefined;
-    const layer = textLayerRef.current;
-    const haystack = layer?.textContent || "";
+    const host = textLayerRef.current;
+    const haystack = host?.textContent || "";
     const needle = focus.passage.trim();
     let idx = needle ? haystack.indexOf(needle) : -1;
     let match = needle;
-    if (idx < 0 && needle.length > 40) {
+    if (idx < 0) {
       const short = needle.slice(0, 40);
-      idx = haystack.indexOf(short);
-      match = short;
+      idx = short ? haystack.indexOf(short) : -1;
+      match = short || needle;
     }
     if (idx >= 0) {
       setFlash({ id: `cite-${focus.nonce}`, start: idx, end: idx + match.length, text: match, tone: "citation" });
@@ -131,8 +134,11 @@ function PdfPage({ doc, number, focus, onAnnotate, annotations, revision = 0 }) 
 
   return (
     <div ref={wrapRef} data-page={number} className="relative mx-auto mb-[14px] last:mb-0">
-      <div className="relative rounded-[6px] overflow-hidden bg-white shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
-        <canvas ref={canvasRef} className="block" style={size ? { width: size.width, height: size.height } : undefined} />
+      <div
+        className="relative rounded-[6px] overflow-hidden bg-white shadow-[0_1px_3px_rgba(0,0,0,0.4)]"
+        style={size ? { width: size.width, height: size.height } : undefined}
+      >
+        <canvas ref={canvasRef} className="block" />
         <div
           ref={textLayerRef}
           className="rl-text-layer"
@@ -154,16 +160,20 @@ function PdfPage({ doc, number, focus, onAnnotate, annotations, revision = 0 }) 
 }
 
 export default function PdfView({ url, focus, annotations, onAnnotate }) {
+  const scrollRef = useRef(null);
   const [doc, setDoc] = useState(null);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const [pages, setPages] = useState(0);
+  const [sizes, setSizes] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     let loaded = null;
     setStatus("loading");
     setError("");
+    setSizes(null);
+    setPages(0);
     const task = pdfjsLib.getDocument({ url, withCredentials: false });
     task.promise
       .then((document) => {
@@ -197,6 +207,36 @@ export default function PdfView({ url, focus, annotations, onAnnotate }) {
     };
   }, [url]);
 
+  useEffect(() => {
+    if (!doc) return undefined;
+    let cancelled = false;
+    let raf = 0;
+    const compute = async () => {
+      const containerWidth = scrollRef.current?.clientWidth || 0;
+      if (containerWidth < 160) {
+        raf = requestAnimationFrame(compute);
+        return;
+      }
+      const first = await doc.getPage(1);
+      if (cancelled) return;
+      const unscaled = first.getViewport({ scale: 1 });
+      const scale = Math.min(2, Math.max(0.35, (containerWidth - 32) / unscaled.width));
+      const next = [];
+      for (let n = 1; n <= doc.numPages; n += 1) {
+        const page = await doc.getPage(n);
+        if (cancelled) return;
+        const viewport = page.getViewport({ scale });
+        next.push({ width: viewport.width, height: viewport.height });
+      }
+      if (!cancelled) setSizes(next);
+    };
+    compute();
+    return () => {
+      cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [doc]);
+
   if (status === "loading") {
     return (
       <div className="flex h-full items-center justify-center">
@@ -214,13 +254,17 @@ export default function PdfView({ url, focus, annotations, onAnnotate }) {
   }
 
   return (
-    <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar bg-[#0e111a] px-[16px] py-[16px]">
+    <div
+      ref={scrollRef}
+      className="h-full overflow-y-auto overflow-x-hidden no-scrollbar bg-[#0e111a] px-[16px] py-[16px]"
+    >
       {Array.from({ length: pages }, (_, index) => (
         <PdfPage
           key={index + 1}
           doc={doc}
           number={index + 1}
           focus={focus}
+          size={sizes ? sizes[index] : null}
           annotations={annotations}
           onAnnotate={onAnnotate}
         />

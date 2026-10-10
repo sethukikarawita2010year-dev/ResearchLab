@@ -72,7 +72,7 @@ function WebSection({ index, heading, text, annotations, focusPassage, onAnnotat
   );
 }
 
-function WebView({ source, focusPassage, annotations, onAnnotate }) {
+function WebView({ source, focusPassage, annotations, onAnnotate, onAvailability }) {
   const [state, setState] = useState({ status: "loading" });
   const focus = focusPassage ? { ...focusPassage, nonce: focusPassage.nonce } : null;
 
@@ -81,10 +81,14 @@ function WebView({ source, focusPassage, annotations, onAnnotate }) {
     setState({ status: "loading" });
     fetchSourceContent(source.url)
       .then((data) => {
-        if (!cancelled) setState({ status: "ready", data });
+        if (cancelled) return;
+        setState({ status: "ready", data });
+        onAvailability?.(source.url, Boolean(data?.available) && (data?.sections || []).length > 0);
       })
       .catch((err) => {
-        if (!cancelled) setState({ status: "error", error: err?.message || "Could not load this source." });
+        if (cancelled) return;
+        setState({ status: "error", error: err?.message || "Could not load this source." });
+        onAvailability?.(source.url, false);
       });
     return () => {
       cancelled = true;
@@ -133,7 +137,7 @@ function WebView({ source, focusPassage, annotations, onAnnotate }) {
   );
 }
 
-export default function SourceViewer({ source, focus, annotations, onAnnotate, onClose }) {
+export default function SourceViewer({ source, focus, annotations, onAnnotate, onClose, onAvailability }) {
   if (!source) return null;
   const isPdf = source.kind === "pdf";
 
@@ -166,7 +170,7 @@ export default function SourceViewer({ source, focus, annotations, onAnnotate, o
         {isPdf ? (
           <PdfView url={source.pdfUrl} focus={focus} annotations={annotations} onAnnotate={onAnnotate} />
         ) : (
-          <WebView source={source} focusPassage={focus} annotations={annotations} onAnnotate={onAnnotate} />
+          <WebView source={source} focusPassage={focus} annotations={annotations} onAnnotate={onAnnotate} onAvailability={onAvailability} />
         )}
       </div>
     </div>

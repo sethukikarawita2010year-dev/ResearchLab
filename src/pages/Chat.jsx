@@ -4,7 +4,7 @@ import { usePdfAttachment, PdfFileInput, PdfChip } from "../components/PdfAttach
 import RichText from "../components/RichText";
 import SourceViewer from "../components/SourceViewer";
 import RangeMarks from "../components/RangeMarks";
-import { analyzePaper, chatMessage, uploadPdf, resolveSource, documentUrl } from "../lib/api";
+import { analyzePaper, chatMessage, uploadPdf, resolveSource, documentUrl, fetchSourceContent } from "../lib/api";
 import { selectionOffsets, selectionRect, clearSelection } from "../lib/domText";
 import { useSidebar } from "../components/sidebarContext";
 import {
@@ -212,15 +212,29 @@ function SectionHeader({ num, title, open, onToggle }) {
   );
 }
 
-function SummaryCard({ sections }) {
+function SummaryCard({ msg, sections, annotations, onAnnotate }) {
   const [open, setOpen] = useState({ s1: true, s2: true, s3: true, s4: true, s5: true });
   const toggle = (key) => setOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+  const cardRef = useRef(null);
   const s = sections || {};
   const results = Array.isArray(s.key_results) ? s.key_results : [];
 
   return (
-    <div className="relative bg-[#161922] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[12px] items-start overflow-hidden pb-[17px] pt-[29px] px-[17px] rounded-[12px] shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.1),0px_4px_6px_-4px_rgba(0,0,0,0.1)] shrink-0 w-full">
+    <div
+      ref={cardRef}
+      onMouseUp={() => {
+        const offsets = selectionOffsets(cardRef.current);
+        if (offsets) onAnnotate?.(msg.id, { ...offsets, rect: selectionRect() });
+      }}
+      className="relative bg-[#161922] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[12px] items-start overflow-hidden pb-[17px] pt-[29px] px-[17px] rounded-[12px] shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.1),0px_4px_6px_-4px_rgba(0,0,0,0.1)] shrink-0 w-full"
+    >
       <div className="absolute bg-[#6366f1] bottom-0 left-0 top-0 w-[4px]" />
+      <RangeMarks
+        hostRef={cardRef}
+        items={(annotations || [])
+          .filter((a) => a.target?.kind === "message" && a.target?.id === msg.id)
+          .map((a) => ({ ...a, tone: "annotation" }))}
+      />
 
       <div className="content-stretch flex flex-col gap-[8px] relative shrink-0 w-full">
         <SectionHeader
@@ -341,7 +355,7 @@ function SummaryCard({ sections }) {
   );
 }
 
-function MessageView({ msg, onCopy, onShare, onCitation, annotations, onAnnotate }) {
+function MessageView({ msg, onCopy, onShare, onCitation, openableFor, annotations, onAnnotate, sidebarOpen }) {
   const answerRef = useRef(null);
   if (msg.role === "user") {
     return (
@@ -374,7 +388,11 @@ function MessageView({ msg, onCopy, onShare, onCitation, annotations, onAnnotate
   }
 
   return (
-    <div className="content-stretch flex flex-col items-start pr-[148px] relative shrink-0 w-full">
+    <div
+      className={`content-stretch flex flex-col items-start pr-[148px] relative shrink-0 w-full${
+        sidebarOpen ? " pl-[8px]" : ""
+      }`}
+    >
       <div className="content-stretch flex flex-col gap-[4px] items-start relative shrink-0 w-full">
         <div className="content-stretch flex items-center justify-between px-[4px] relative shrink-0 w-full">
           <span className="font-inter font-semibold text-[#64748b] text-[11px] tracking-[0.33px] leading-[14px]">
@@ -402,7 +420,12 @@ function MessageView({ msg, onCopy, onShare, onCitation, annotations, onAnnotate
           </div>
         </div>
         {msg.kind === "summary" ? (
-          <SummaryCard sections={msg.sections} />
+          <SummaryCard
+            msg={msg}
+            sections={msg.sections}
+            annotations={annotations}
+            onAnnotate={onAnnotate}
+          />
         ) : (
           <div
             className={`relative bg-[#161922] border content-stretch flex flex-col gap-[12px] items-start p-[17px] rounded-[12px] shrink-0 w-full shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.1),0px_4px_6px_-4px_rgba(0,0,0,0.1)] ${
@@ -426,6 +449,7 @@ function MessageView({ msg, onCopy, onShare, onCitation, annotations, onAnnotate
                   text={typeof msg.content === "string" ? msg.content : ""}
                   citations={msg.citations}
                   onCitation={onCitation}
+                  openableFor={openableFor}
                 />
                 <RangeMarks
                   hostRef={answerRef}
@@ -516,6 +540,7 @@ export default function Chat() {
     [sessions, sessionId],
   );
   const headerTitle = currentSession?.title || pdfName;
+  const headerFolder = currentSession?.folder || "All Papers";
 
   const {
     file,
@@ -524,7 +549,6 @@ export default function Chat() {
     open: openPdf,
     onChange: onPdfChange,
     clear: clearPdf,
-    attach: attachPdf,
   } = usePdfAttachment();
 
   useEffect(() => {
@@ -620,63 +644,104 @@ export default function Chat() {
     setBusy("idle");
   };
 
-  const hydrate = (sid, state) => {
+  const hydrate = async (sid, state, pendingFile) => {
     sessionIdRef.current = sid;
     setSessionId(sid);
     startedRef.current = true;
-    const rec = getSession(sid);
-    const name =
+
+    let rec = getSession(sid);
+    let docId = rec?.uploadId || state.uploadId || sid;
+    let name =
       rec?.pdfName ||
       state.pdfName ||
       sessionStorage.getItem("researchlab.pdfName") ||
       "document.pdf";
-    setDocumentId(rec?.uploadId || sid);
+
+    // A PDF handed over from the converter becomes this session's primary
+    // document; upload it up-front so the summary below can use a real id.
+    if (pendingFile) {
+      try {
+        const uploaded = await uploadPdf(pendingFile);
+        docId = uploaded.id;
+        name = uploaded.filename || pendingFile.name;
+        updateSession(sid, { uploadId: docId, pdfName: name });
+        rec = getSession(sid) || rec;
+      } catch (err) {
+        addError("Couldn't attach that PDF", err);
+      }
+    }
+
+    setDocumentId(docId);
     setPdfName(name);
 
+    let restored = [];
     if (rec && Array.isArray(rec.messages) && rec.messages.length) {
-      setMessages(rec.messages);
-      messagesRef.current = rec.messages;
+      restored = rec.messages.filter(
+        (m) => !(m.role === "user" && !(m.content || "").trim() && !m.pdfName),
+      );
       setExtraDocs(Array.isArray(rec.extraDocs) ? rec.extraDocs : []);
       setWebSources(Array.isArray(rec.webSources) ? rec.webSources : []);
-      const restored = Array.isArray(rec.annotations) ? rec.annotations : [];
-      annotationsRef.current = restored;
-      setAnnotations(restored);
-      return;
+      const savedAnnotations = Array.isArray(rec.annotations) ? rec.annotations : [];
+      annotationsRef.current = savedAnnotations;
+      setAnnotations(savedAnnotations);
+    } else {
+      const prompt = (
+        state.prompt ??
+        rec?.prompt ??
+        sessionStorage.getItem("researchlab.prompt") ??
+        ""
+      ).trim();
+      restored =
+        prompt || docId
+          ? [
+              {
+                id: uid(),
+                role: "user",
+                kind: "text",
+                content: prompt,
+                pdfName: docId ? name : null,
+                time: nowLabel(),
+              },
+            ]
+          : [];
+      setExtraDocs([]);
+      setWebSources([]);
+      annotationsRef.current = [];
+      setAnnotations([]);
+      if (!rec) {
+        createSessionRecord({
+          id: sid,
+          title: state.title || name,
+          folder: state.folder,
+          pdfName: name,
+          prompt,
+          uploadId: docId,
+          messages: [],
+          extraDocs: [],
+          webSources: [],
+        });
+      }
     }
 
-    const prompt = (
-      state.prompt ??
-      rec?.prompt ??
-      sessionStorage.getItem("researchlab.prompt") ??
-      ""
-    ).trim();
-    const userMsg = {
-      id: uid(),
-      role: "user",
-      kind: "text",
-      content: prompt,
-      pdfName: name,
-      time: nowLabel(),
-    };
-    setMessages([userMsg]);
-    messagesRef.current = [userMsg];
-    setExtraDocs([]);
-    setWebSources([]);
-    annotationsRef.current = [];
-    setAnnotations([]);
-    if (!rec) {
-      createSessionRecord({
-        id: sid,
-        title: state.title || name,
-        pdfName: name,
-        prompt,
-        uploadId: sid,
-        messages: [],
-        extraDocs: [],
-        webSources: [],
-      });
+    setMessages(restored);
+    messagesRef.current = restored;
+
+    // Always output the structured summary for the primary document, whether
+    // or not the session was started with a prompt, and even if a prior turn
+    // persisted messages without ever producing the summary.
+    if (docId && !restored.some((m) => m.kind === "summary")) {
+      const lastUser = [...restored]
+        .reverse()
+        .find((m) => m.role === "user" && (m.content || "").trim());
+      const seed = lastUser || {
+        id: uid(),
+        role: "user",
+        kind: "text",
+        content: "",
+        time: nowLabel(),
+      };
+      enqueue(() => runTurn(seed, docId, [docId], { newDoc: true }));
     }
-    enqueue(() => runTurn(userMsg, sid, [sid]));
   };
 
   useEffect(() => {
@@ -684,13 +749,9 @@ export default function Chat() {
     const sid =
       state.sessionId || state.uploadId || sessionStorage.getItem("researchlab.uploadId") || null;
     if (!sid) return;
+    if (startedRef.current && sessionIdRef.current === sid) return;
     const pending = takePendingAttachment(sid);
-    if (startedRef.current && sessionIdRef.current === sid) {
-      if (pending) attachPdf(pending);
-      return;
-    }
-    hydrate(sid, state);
-    if (pending) attachPdf(pending);
+    hydrate(sid, state, pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key]);
 
@@ -916,6 +977,18 @@ export default function Chat() {
       });
       notify("Source added");
       closeAddSource();
+      const known = [...extraDocs.map((d) => d.id), documentId].filter(Boolean);
+      const docList = Array.from(new Set([entry.id, ...known]));
+      const userMsg = {
+        id: uid(),
+        role: "user",
+        kind: "text",
+        content: `Summarize the attached paper "${entry.name}".`,
+        pdfName: entry.name,
+        time: nowLabel(),
+      };
+      addMsg(userMsg);
+      enqueue(() => runTurn(userMsg, entry.id, docList, { newDoc: true }));
     } catch (err) {
       setSourceError(err.message || "Upload failed");
     } finally {
@@ -930,7 +1003,12 @@ export default function Chat() {
     setSourceError("");
     try {
       const info = await resolveSource({ url: raw });
-      const entry = { id: info.url, title: info.title || info.host, url: info.url };
+      const entry = {
+        id: info.url,
+        title: info.title || info.host,
+        url: info.url,
+        available: info.available !== false,
+      };
       setWebSources((prev) => {
         const next = prev.some((s) => s.url === entry.url) ? prev : [...prev, entry];
         try {
@@ -951,10 +1029,53 @@ export default function Chat() {
 
   const viewerRef = useRef(null);
   const rootRef = useRef(null);
+  const frameRef = useRef(null);
+  const [sourceAvailability, setSourceAvailability] = useState({});
   useEffect(() => {
     viewerRef.current = viewer;
   }, [viewer]);
   const sidebarBeforeRef = useRef(false);
+
+  const markAvailability = (url, ok) => {
+    if (!url) return;
+    setSourceAvailability((prev) => (prev[url] === ok ? prev : { ...prev, [url]: ok }));
+  };
+
+  const precheckedRef = useRef(new Set());
+  useEffect(() => {
+    const urls = new Set();
+    webSources.forEach((w) => w.url && urls.add(w.url));
+    messages.forEach((m) => {
+      (m.citations || []).forEach((c) => {
+        if ((c.type === "web" || c.source_type === "web") && c.url) urls.add(c.url);
+      });
+    });
+    urls.forEach((url) => {
+      if (precheckedRef.current.has(url)) return;
+      precheckedRef.current.add(url);
+      fetchSourceContent(url)
+        .then((data) => markAvailability(url, Boolean(data?.available) && (data?.sections || []).length > 0))
+        .catch(() => markAvailability(url, false));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webSources, messages]);
+
+  const isSourceOpenable = (source) => {
+    if (!source) return false;
+    if (source.kind === "pdf") return true;
+    const known = sourceAvailability[source.id];
+    if (known !== undefined) return known;
+    const entry = webSources.find((w) => w.url === source.id);
+    return !entry || entry.available !== false;
+  };
+
+  const isCitationOpenable = (cit) => {
+    if (!cit) return false;
+    const web = cit.type === "web" || cit.source_type === "web";
+    if (!web) return true;
+    const url = cit.source_id || cit.url;
+    return url ? sourceAvailability[url] !== false : false;
+  };
 
   const openViewer = (source, spec = null) => {
     if (!source) return;
@@ -971,6 +1092,28 @@ export default function Chat() {
     setFocus(null);
     setCollapsed(sidebarBeforeRef.current);
   };
+
+  const toggleViewer = (source) => {
+    const current = viewerRef.current;
+    if (current && current.id === source.id && current.kind === source.kind) {
+      closeViewer();
+      return;
+    }
+    openViewer(source);
+  };
+
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el || typeof el.scrollTo !== "function") return undefined;
+    if (!viewer) {
+      el.scrollTo({ left: 0, behavior: "smooth" });
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      el.scrollTo({ left: el.scrollWidth - el.clientWidth, behavior: "smooth" });
+    }, 240);
+    return () => clearTimeout(timer);
+  }, [viewer]);
 
   const openCitation = (cit) => {
     if (!cit) return;
@@ -1057,6 +1200,7 @@ export default function Chat() {
         title: d.name,
         badge: "PDF",
         meta: d.primary ? "Uploaded document • primary source" : "Uploaded document • attached",
+        openable: true,
         source: { kind: "pdf", id: d.id, title: d.name, pdfUrl: documentUrl(d.id) },
       });
     });
@@ -1070,6 +1214,7 @@ export default function Chat() {
         title: w.title || hostOf(w.url),
         badge: "WEB",
         meta: w.url,
+        openable: sourceAvailability[w.url] !== undefined ? sourceAvailability[w.url] : w.available !== false,
         source: { kind: "web", id: w.url, url: w.url, title: w.title || hostOf(w.url) },
       });
     });
@@ -1083,13 +1228,14 @@ export default function Chat() {
             title: c.title || hostOf(c.url),
             badge: "WEB",
             meta: c.url,
+            openable: sourceAvailability[c.url] !== false,
             source: { kind: "web", id: c.url, url: c.url, title: c.title || hostOf(c.url) },
           });
         }
       });
     });
     return list;
-  }, [messages, documentId, pdfName, extraDocs, webSources]);
+  }, [messages, documentId, pdfName, extraDocs, webSources, sourceAvailability]);
 
   return (
     <div ref={rootRef} className="bg-[#0b0d13] relative h-screen w-full overflow-hidden">
@@ -1192,16 +1338,13 @@ export default function Chat() {
         </div>
       )}
       <div
-        className={`absolute inset-y-0 right-0 overflow-hidden transition-[left] duration-200 ease-out ${
+        ref={frameRef}
+        className={`absolute inset-y-0 right-0 overflow-x-auto overflow-y-hidden transition-[left] duration-200 ease-out ${
           collapsed ? "left-0" : "left-[260px]"
         }`}
       >
-      <div className="flex h-full w-full">
-      <div
-        className={`relative h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
-          viewer ? "w-1/2" : "w-full"
-        }`}
-      >
+      <div className="flex h-full">
+      <div className="relative h-full shrink-0 overflow-hidden w-full">
       <div
         className={`flex h-full w-[200%] transition-transform duration-[420ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${
           notesOpen ? (notesMaximized ? "-translate-x-1/2" : "-translate-x-[12.5%]") : "translate-x-0"
@@ -1213,6 +1356,10 @@ export default function Chat() {
           <div className="content-stretch flex gap-[4px] items-center relative shrink-0">
             <span className="font-inter font-medium text-[#94a3b8] text-[13px] tracking-[0.13px] leading-[16px] whitespace-nowrap">
               Workspace
+            </span>
+            <img alt="" src={`${A}/chat-chevron.svg`} className="h-[7px] w-[4.317px] shrink-0" />
+            <span className="font-inter font-medium text-[#94a3b8] text-[13px] tracking-[0.13px] leading-[16px] whitespace-nowrap">
+              {headerFolder}
             </span>
             <img alt="" src={`${A}/chat-chevron.svg`} className="h-[7px] w-[4.317px] shrink-0" />
             <span className="font-inter font-semibold text-[#e2e8f0] text-[13px] tracking-[0.13px] leading-[16px] whitespace-nowrap">
@@ -1251,15 +1398,17 @@ export default function Chat() {
         <div className="content-stretch flex flex-1 min-h-0 items-stretch relative shrink-0 w-full z-[1]">
           <div className="content-stretch flex flex-1 flex-col min-w-px relative shrink-0">
             <div className="content-stretch flex flex-1 flex-col items-center min-w-px no-scrollbar px-[12px] relative overflow-y-auto overflow-x-hidden">
-            <div className="content-stretch flex flex-col gap-[16px] items-start max-w-[1040px] pt-[16px] pb-[84px] relative shrink-0 w-full">
+            <div className="content-stretch flex flex-col gap-[16px] items-start max-w-[1040px] pt-[16px] pb-[136px] relative shrink-0 w-full">
               {messages.length === 0 && <EmptyState pdfName={documentId ? pdfName : ""} />}
               {messages.map((m) => (
                 <MessageView
                   key={m.id}
                   msg={m}
+                  sidebarOpen={!collapsed}
                   onCopy={copyResponse}
                   onShare={handleShare}
                   onCitation={openCitation}
+                  openableFor={isCitationOpenable}
                   annotations={annotations}
                   onAnnotate={handleAnswerAnnotate}
                 />
@@ -1279,9 +1428,9 @@ export default function Chat() {
             </div>
             </div>
 
-            {/* Floating query console, styled like the workspace composer (no destination folder) */}
-            <div className="absolute bottom-0 content-stretch flex flex-col items-center inset-x-0 px-[12px] pb-[14px] pt-[12px] pointer-events-none relative z-10">
-              <div className="backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[9px] pointer-events-auto relative rounded-[12px] w-full max-w-[820px]">
+            {/* Locked query console, styled like the workspace composer (no destination folder) */}
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[#0b0d13] via-[rgba(11,13,19,0.92)] via-50% to-[rgba(11,13,19,0)] content-stretch flex flex-col items-center px-[12px] pb-[20px] pt-[16px] z-10">
+              <div className="bg-[#161922] border border-[#2a3044] border-solid content-stretch flex flex-col gap-[4px] items-start p-[9px] relative rounded-[12px] w-full max-w-[820px]">
                 <div className="absolute bg-[rgba(255,255,255,0)] inset-[-1px_-1px_-1.33px_-1px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] pointer-events-none" />
 
                 {(file || error || status) && (
@@ -1397,50 +1546,54 @@ export default function Chat() {
                   </div>
                 </div>
 
-                {annotations.length > 0 && (
-                  <div className="content-stretch flex flex-col items-start pt-[12px] px-[16px] relative shrink-0 w-full">
-                    <div className="content-stretch flex items-center justify-between pb-[8px] relative shrink-0 w-full">
-                      <span className="font-inter font-semibold text-[#94a3b8] text-[11px] tracking-[0.33px] leading-[14px] uppercase">
-                        Annotations
-                      </span>
-                      <button
-                        type="button"
-                        onClick={clearAnnotations}
-                        aria-label="Delete all annotations"
-                        title="Delete all annotations"
-                        className="content-stretch flex items-center justify-center p-[4px] relative rounded-[6px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#f87171] transition-colors"
-                      >
-                        <TrashIcon />
-                      </button>
-                    </div>
-                    <div className="content-stretch flex flex-col gap-[6px] items-start relative shrink-0 w-full">
-                      {annotations.map((a, i) => (
-                        <div
-                          key={a.id}
-                          className="bg-[#161922] border border-[#2a3044] border-solid content-stretch flex gap-[8px] items-center px-[10px] py-[8px] relative rounded-[10px] shrink-0 w-full"
-                        >
-                          <span className="bg-[rgba(30,27,75,0.7)] border border-[rgba(67,56,202,0.5)] border-solid content-stretch flex items-center justify-center relative rounded-[6px] shrink-0 size-[20px]">
-                            <span className="font-inter font-semibold text-[#a5b4fc] text-[11px] leading-[14px]">{i + 1}</span>
-                          </span>
-                          <span className="font-inter text-[12px] text-[#cbd5e1] leading-[16px] truncate min-w-0 flex-1" title={a.text}>
-                            {a.text}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => removeAnnotation(a.id)}
-                            aria-label="Remove annotation"
-                            title="Remove annotation"
-                            className="content-stretch flex items-center justify-center p-[4px] relative rounded-[6px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#f87171] transition-colors"
-                          >
-                            <MinusIcon />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 <div className="flex-1 min-h-0 no-scrollbar overflow-y-auto relative w-full">
+                  {annotations.length > 0 && (
+                    <div className="content-stretch flex flex-col items-start pt-[12px] px-[16px] relative w-full">
+                      <div className="content-stretch flex items-center justify-between pb-[8px] relative shrink-0 w-full">
+                        <span className="font-inter font-semibold text-[#94a3b8] text-[11px] tracking-[0.33px] leading-[14px] uppercase">
+                          Annotations
+                        </span>
+                        <button
+                          type="button"
+                          onClick={clearAnnotations}
+                          aria-label="Delete all annotations"
+                          title="Delete all annotations"
+                          className="content-stretch flex items-center justify-center p-[4px] relative rounded-[6px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#f87171] transition-colors"
+                        >
+                          <TrashIcon />
+                        </button>
+                      </div>
+                      <div
+                        className={`content-stretch flex flex-col gap-[6px] items-start relative w-full ${
+                          annotations.length > 5 ? "max-h-[224px] overflow-y-auto no-scrollbar pr-[2px]" : ""
+                        }`}
+                      >
+                        {annotations.map((a, i) => (
+                          <div
+                            key={a.id}
+                            className="bg-[#161922] border border-[#2a3044] border-solid content-stretch flex gap-[8px] items-center px-[10px] py-[8px] relative rounded-[10px] shrink-0 w-full"
+                          >
+                            <span className="bg-[rgba(30,27,75,0.7)] border border-[rgba(67,56,202,0.5)] border-solid content-stretch flex items-center justify-center relative rounded-[6px] shrink-0 size-[20px]">
+                              <span className="font-inter font-semibold text-[#a5b4fc] text-[11px] leading-[14px]">{i + 1}</span>
+                            </span>
+                            <span className="font-inter text-[12px] text-[#cbd5e1] leading-[16px] truncate min-w-0 flex-1" title={a.text}>
+                              {a.text}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeAnnotation(a.id)}
+                              aria-label="Remove annotation"
+                              title="Remove annotation"
+                              className="content-stretch flex items-center justify-center p-[4px] relative rounded-[6px] shrink-0 cursor-pointer text-[#64748b] hover:bg-[#1b202e] hover:text-[#f87171] transition-colors"
+                            >
+                              <MinusIcon />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="font-inter font-semibold text-[#94a3b8] text-[16px] tracking-[0.8px] uppercase leading-[24px] px-[20px] pt-[16px] pb-[8px]">
                     Referenced Corpus
                   </div>
@@ -1451,14 +1604,21 @@ export default function Chat() {
                           key={s.key}
                           role="button"
                           tabIndex={0}
-                          onClick={() => openViewer(s.source)}
+                          onClick={() => toggleViewer(s.source)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") openViewer(s.source);
+                            if (e.key === "Enter" || e.key === " ") toggleViewer(s.source);
                           }}
-                          className={`bg-[#161922] border border-solid content-stretch flex flex-col gap-[4px] items-start p-[13px] relative rounded-[12px] shrink-0 w-full cursor-pointer hover:border-[#3b4361] transition-colors ${
+                          title={
+                            s.openable
+                              ? "Open in split view"
+                              : "This source can't be opened in the split view"
+                          }
+                          className={`bg-[#161922] border border-solid content-stretch flex flex-col gap-[4px] items-start p-[13px] relative rounded-[12px] shrink-0 w-full cursor-pointer transition-[border-color,box-shadow] ${
                             viewer?.id === s.source.id && viewer?.kind === s.source.kind
                               ? "border-[#6366f1] ring-1 ring-[#6366f1]/40"
-                              : "border-[#2a3044]"
+                              : s.openable
+                                ? "border-[#2a3044] hover:border-[#22c55e] hover:shadow-[0_0_10px_rgba(34,197,94,0.45),0_0_2px_rgba(34,197,94,0.8)]"
+                                : "border-[#2a3044] hover:border-[#ef4444] hover:shadow-[0_0_10px_rgba(239,68,68,0.45),0_0_2px_rgba(239,68,68,0.8)]"
                           }`}
                         >
                           <div className="content-stretch flex items-center justify-between gap-[8px] relative shrink-0 w-full">
@@ -1498,7 +1658,7 @@ export default function Chat() {
                 <div className="border-[#1e2230] border-t border-solid content-stretch flex flex-col items-start pb-[16px] pt-[17px] px-[16px] relative shrink-0 w-full">
                   <div
                     aria-hidden={!addSourceOpen}
-                    className={`absolute bottom-[calc(100%+8px)] left-[16px] right-[16px] origin-bottom backdrop-blur-[12px] bg-[rgba(22,25,34,0.95)] border border-[#2a3044] border-solid rounded-[12px] p-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.25)] z-20 transition-[opacity,transform] duration-200 ease-out ${
+                    className={`absolute bottom-[calc(100%+8px)] left-[16px] right-[16px] origin-bottom z-20 transition-[opacity,transform] duration-200 ease-out ${
                       addSourceOpen
                         ? "animate-[folder-popup-in_180ms_ease-out] opacity-100 pointer-events-auto [transform:translateY(0)_scaleY(1)]"
                         : "opacity-0 pointer-events-none [transform:translateY(8px)_scaleY(0.65)]"
@@ -1506,31 +1666,32 @@ export default function Chat() {
                   >
                       {addSourceMode === "menu" ? (
                         <div className="content-stretch flex flex-col gap-[8px] w-full">
-                          <div className="font-inter text-[12px] text-[#94a3b8] leading-[16px]">
-                            Add a source
-                          </div>
-                          <div className="content-stretch flex gap-[8px] w-full">
-                            <button
-                              type="button"
-                              onClick={() => sourceInputRef.current?.click()}
-                              disabled={sourceBusy}
-                              title="Attach a PDF"
-                              className="content-stretch flex flex-1 flex-col items-center gap-[6px] py-[12px] rounded-[10px] border border-[#2a3044] bg-[#161922] cursor-pointer hover:bg-[#1b202e] hover:border-[#6366f1] transition-colors"
-                            >
-                              <span className="text-[#a5b4fc]">
-                                <PinIcon />
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAddSourceMode("url")}
-                              disabled={sourceBusy}
-                              title="Add from a web URL"
-                              className="content-stretch flex flex-1 flex-col items-center gap-[6px] py-[12px] rounded-[10px] border border-[#2a3044] bg-[#161922] cursor-pointer hover:bg-[#1b202e] hover:border-[#6366f1] transition-colors"
-                            >
-                              <img alt="" src={`${A}/chat-globe.svg`} className="size-[16px]" />
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => sourceInputRef.current?.click()}
+                            disabled={sourceBusy}
+                            title="Attach a pdf file"
+                            className="content-stretch flex flex-row items-center justify-center gap-[8px] px-[12px] py-[11px] rounded-[10px] border border-[#2a3044] bg-[#161922] cursor-pointer hover:bg-[#1b202e] hover:border-[#6366f1] transition-colors"
+                          >
+                            <span className="text-[#a5b4fc] shrink-0">
+                              <PinIcon />
+                            </span>
+                            <span className="font-inter font-medium text-[13px] text-[#e2e8f0] leading-[16px] whitespace-nowrap">
+                              Attach a pdf file
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAddSourceMode("url")}
+                            disabled={sourceBusy}
+                            title="Paste a URL"
+                            className="content-stretch flex flex-row items-center justify-center gap-[8px] px-[12px] py-[11px] rounded-[10px] border border-[#2a3044] bg-[#161922] cursor-pointer hover:bg-[#1b202e] hover:border-[#6366f1] transition-colors"
+                          >
+                            <img alt="" src={`${A}/chat-globe.svg`} className="size-[16px] shrink-0" />
+                            <span className="font-inter font-medium text-[13px] text-[#e2e8f0] leading-[16px] whitespace-nowrap">
+                              Paste a URL
+                            </span>
+                          </button>
                         </div>
                       ) : (
                         <div className="content-stretch flex flex-col gap-[8px] w-full">
@@ -1667,6 +1828,7 @@ export default function Chat() {
             )}
             onAnnotate={handleSourceAnnotate}
             onClose={closeViewer}
+            onAvailability={markAvailability}
           />
         )}
       </div>

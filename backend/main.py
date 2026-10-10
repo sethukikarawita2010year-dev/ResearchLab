@@ -74,7 +74,31 @@ app.add_middleware(
 
 # In-memory stores (swap for a database later).
 SESSIONS: dict[str, dict] = {}
-UPLOADS: dict[str, dict] = {}
+
+# Uploaded-PDF metadata is persisted to a small JSON file so uploaded documents
+# stay openable in the split viewer after a backend restart (the PDF bytes live
+# on disk in ``uploads/``; only this metadata was previously lost).
+UPLOADS_FILE = BASE_DIR / "uploads.json"
+
+
+def _load_uploads() -> dict[str, dict]:
+    if not UPLOADS_FILE.exists():
+        return {}
+    try:
+        raw = json.loads(UPLOADS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): v for k, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else {}
+
+
+def _save_uploads() -> None:
+    try:
+        UPLOADS_FILE.write_text(json.dumps(UPLOADS, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+UPLOADS: dict[str, dict] = _load_uploads()
 
 # Conversions are persisted to a small JSON file so the Recent Conversions
 # table survives backend restarts (no external database required).
@@ -240,6 +264,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict:
         "uploaded_at": _now(),
     }
     UPLOADS[upload_id] = record
+    _save_uploads()
     return record
 
 
@@ -295,12 +320,20 @@ def download_conversion(conversion_id: str) -> FileResponse:
 
 
 def _resolve_upload(upload_id: str) -> Path:
-    record = UPLOADS.get(upload_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Document not found. Upload the PDF first.")
     path = UPLOAD_DIR / f"{upload_id}.pdf"
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Document file is missing.")
+        raise HTTPException(status_code=404, detail="Document not found. Upload the PDF first.")
+    # The metadata dict may be missing an entry if the PDF predates metadata
+    # persistence; recover a minimal record so the document stays openable.
+    if upload_id not in UPLOADS:
+        UPLOADS[upload_id] = {
+            "id": upload_id,
+            "filename": path.name,
+            "size": path.stat().st_size,
+            "content_type": "application/pdf",
+            "uploaded_at": _now(),
+        }
+        _save_uploads()
     return path
 
 
