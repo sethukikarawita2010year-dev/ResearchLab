@@ -4,6 +4,7 @@ node_modules/
 # build output
 dist/
 dist-ssr/
+build/
 
 # logs
 *.log
@@ -19,7 +20,37 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# env
+# env (keep .env.example tracked)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# local databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# uploaded / generated user files
+uploads/
+converted/
+conversions.json
+uploads.json
+sources.json
+
+# secrets
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+
+# stray local state
+_uid.txt
