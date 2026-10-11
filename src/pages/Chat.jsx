@@ -4,7 +4,7 @@ import { usePdfAttachment, PdfFileInput, PdfChip } from "../components/PdfAttach
 import RichText from "../components/RichText";
 import SourceViewer from "../components/SourceViewer";
 import RangeMarks from "../components/RangeMarks";
-import { analyzePaper, chatMessage, uploadPdf, resolveSource, documentUrl, fetchSourceContent } from "../lib/api";
+import { analyzePaper, chatMessage, uploadPdf, resolveSource, documentUrl, fetchSourceContent, gradePaper, conversionDownloadUrl } from "../lib/api";
 import { selectionOffsets, selectionRect, clearSelection } from "../lib/domText";
 import { useSidebar } from "../components/sidebarContext";
 import { useAuth } from "../components/AuthProvider";
@@ -15,6 +15,14 @@ import {
   useSessions,
 } from "../lib/sessionStore";
 import { takePendingAttachment } from "../lib/pendingAttachment";
+import { GradeCard, GradePermissionCard } from "../components/GradeTable";
+import {
+  detectGradeRequest,
+  detectGradeAspects,
+  detectGradeSourceIntent,
+  detectPlagiarismRequested,
+  gradeToText,
+} from "../lib/grading";
 
 const A = "/assets";
 
@@ -356,7 +364,7 @@ function SummaryCard({ msg, sections, annotations, onAnnotate }) {
   );
 }
 
-function MessageView({ msg, onCopy, onShare, onCitation, openableFor, annotations, onAnnotate, sidebarOpen }) {
+function MessageView({ msg, onCopy, onShare, onCitation, openableFor, annotations, onAnnotate, sidebarOpen, onGradeRun }) {
   const answerRef = useRef(null);
   if (msg.role === "user") {
     return (
@@ -426,6 +434,20 @@ function MessageView({ msg, onCopy, onShare, onCitation, openableFor, annotation
             sections={msg.sections}
             annotations={annotations}
             onAnnotate={onAnnotate}
+          />
+        ) : msg.kind === "grade" ? (
+          msg.pending ? (
+            <div className="relative bg-[#161922] border border-[#2a3044] p-[17px] rounded-[12px] shrink-0 w-full">
+              <p className="font-inter text-[#94a3b8] text-[13px]">Grading the paper…</p>
+            </div>
+          ) : (
+            <GradeCard grade={msg.grade} onCitation={onCitation} openableFor={openableFor} />
+          )
+        ) : msg.kind === "grade-permission" ? (
+          <GradePermissionCard
+            options={msg.options}
+            busy={msg.pending}
+            onRun={(sel) => onGradeRun?.(msg, sel)}
           />
         ) : (
           <div
@@ -525,6 +547,8 @@ export default function Chat() {
   const [notesMaximized, setNotesMaximized] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [toast, setToast] = useState(null);
+  const [gradeNotice, setGradeNotice] = useState(null);
+  const gradeNoticeTimerRef = useRef(null);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [extraDocs, setExtraDocs] = useState([]);
   const [webSources, setWebSources] = useState([]);
@@ -570,6 +594,7 @@ export default function Chat() {
     annotationsRef.current = annotations;
   }, [annotations]);
   const startedRef = useRef(false);
+  const handledKeyRef = useRef(null);
   const sendGuard = useRef(Promise.resolve());
   const enqueue = (fn) => {
     const run = sendGuard.current.then(fn);
@@ -603,6 +628,85 @@ export default function Chat() {
       error: true,
       time: nowLabel(),
     });
+
+  const patchMsg = (id, patch) => {
+    messagesRef.current = messagesRef.current.map((m) => (m.id === id ? { ...m, ...patch } : m));
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  };
+
+  const addGradePermission = (options) =>
+    addMsg({
+      id: uid(),
+      role: "assistant",
+      kind: "grade-permission",
+      options,
+      pending: false,
+      time: nowLabel(),
+    });
+
+  const addGrade = (grade) =>
+    addMsg({ id: uid(), role: "assistant", kind: "grade", grade, time: nowLabel() });
+
+  const showGradeNotice = (text) => {
+    setGradeNotice(text);
+    clearTimeout(gradeNoticeTimerRef.current);
+    gradeNoticeTimerRef.current = setTimeout(() => setGradeNotice(null), 3000);
+  };
+
+  const runGrade = async ({ docId, docIdList, aspects, allowUploads, allowWeb, targetId = null }) => {
+    setBusy("grading");
+    const prevWeb = webSearchRef.current;
+    const turnWebOn = allowWeb && !prevWeb;
+    if (turnWebOn) {
+      webSearchRef.current = true;
+      setWebSearch(true);
+    }
+    try {
+      const res = await gradePaper({
+        documentId: docId,
+        documentIds: docIdList,
+        aspects,
+        allowUploads,
+        allowWeb,
+      });
+      if (targetId) patchMsg(targetId, { kind: "grade", grade: res, pending: false, options: undefined });
+      else addGrade(res);
+    } catch (err) {
+      if (targetId) {
+        patchMsg(targetId, {
+          kind: "text",
+          pending: false,
+          error: true,
+          grade: undefined,
+          options: undefined,
+          content: `Grading failed: ${err?.message || err}`,
+        });
+      } else {
+        addError("Grading failed", err);
+      }
+    } finally {
+      if (turnWebOn) {
+        webSearchRef.current = prevWeb;
+        setWebSearch(prevWeb);
+      }
+      setBusy("idle");
+    }
+  };
+
+  const startGradeFromPermission = (msg, selection) => {
+    const info = msg.options || {};
+    patchMsg(msg.id, { pending: true });
+    enqueue(() =>
+      runGrade({
+        docId: info.docId,
+        docIdList: info.docIdList,
+        aspects: info.aspects,
+        allowUploads: selection?.allowUploads,
+        allowWeb: selection?.allowWeb,
+        targetId: msg.id,
+      }),
+    );
+  };
 
   const runTurn = async (userMsg, docId, docIdList, { newDoc = false } = {}) => {
     const alreadySummarized = !newDoc && messagesRef.current.some((m) => m.kind === "summary");
@@ -661,13 +765,55 @@ export default function Chat() {
 
     // A PDF handed over from the converter becomes this session's primary
     // document; upload it up-front so the summary below can use a real id.
+    // It can arrive as an in-memory File (same-tab transfer) or as a
+    // download reference in the navigation state (survives a cold mount).
+    if (!pendingFile && state.conversion?.downloadUrl) {
+      try {
+        const res = await fetch(conversionDownloadUrl(state.conversion.downloadUrl), {
+          credentials: "include",
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          pendingFile = new File([blob], state.conversion.filename || "document.pdf", {
+            type: "application/pdf",
+          });
+        }
+      } catch {
+        /* fall through — nothing attached */
+      }
+    }
+
+    const hasHistory =
+      Boolean(rec) &&
+      Array.isArray(rec.messages) &&
+      rec.messages.some((m) => m.role === "user" || m.kind === "summary");
+
+    let appendedDoc = null;
     if (pendingFile) {
       try {
         const uploaded = await uploadPdf(pendingFile);
-        docId = uploaded.id;
-        name = uploaded.filename || pendingFile.name;
-        updateSession(sid, { uploadId: docId, pdfName: name });
-        rec = getSession(sid) || rec;
+        const uploadedId = uploaded.id;
+        const uploadedName = uploaded.filename || pendingFile.name;
+        if (hasHistory) {
+          // The session already has a conversation. Rather than re-pointing it
+          // at the new PDF and wiping the chat (which replaced the previous
+          // paper), keep the primary document and add the transferred PDF to
+          // the source list so it is appended to the conversation instead.
+          appendedDoc = { id: uploadedId, name: uploadedName };
+        } else {
+          docId = uploadedId;
+          name = uploadedName;
+          updateSession(sid, {
+            uploadId: docId,
+            pdfName: name,
+            messages: [],
+            extraDocs: [],
+            webSources: [],
+            annotations: [],
+            prompt: "",
+          });
+          rec = getSession(sid) || rec;
+        }
       } catch (err) {
         addError("Couldn't attach that PDF", err);
       }
@@ -677,22 +823,28 @@ export default function Chat() {
     setPdfName(name);
 
     let restored = [];
-    if (rec && Array.isArray(rec.messages) && rec.messages.length) {
+    if (hasHistory) {
       restored = rec.messages.filter(
         (m) => !(m.role === "user" && !(m.content || "").trim() && !m.pdfName),
       );
-      setExtraDocs(Array.isArray(rec.extraDocs) ? rec.extraDocs : []);
+      const savedExtras = Array.isArray(rec.extraDocs) ? rec.extraDocs : [];
+      setExtraDocs(savedExtras);
       setWebSources(Array.isArray(rec.webSources) ? rec.webSources : []);
       const savedAnnotations = Array.isArray(rec.annotations) ? rec.annotations : [];
       annotationsRef.current = savedAnnotations;
       setAnnotations(savedAnnotations);
+      if (appendedDoc && !savedExtras.some((d) => d.id === appendedDoc.id)) {
+        setExtraDocs([...savedExtras, appendedDoc]);
+      }
     } else {
-      const prompt = (
-        state.prompt ??
-        rec?.prompt ??
-        sessionStorage.getItem("researchlab.prompt") ??
-        ""
-      ).trim();
+      const prompt = pendingFile
+        ? ""
+        : (
+            state.prompt ??
+            rec?.prompt ??
+            sessionStorage.getItem("researchlab.prompt") ??
+            ""
+          ).trim();
       restored =
         prompt || docId
           ? [
@@ -731,10 +883,29 @@ export default function Chat() {
     setMessages(restored);
     messagesRef.current = restored;
 
+    if (appendedDoc) {
+      // Append the transferred paper to the end of the conversation: surface
+      // it as an attachment message and kick off a summary of the new doc.
+      const userMsg = {
+        id: uid(),
+        role: "user",
+        kind: "text",
+        content: `Summarize the attached paper "${appendedDoc.name}".`,
+        pdfName: appendedDoc.name,
+        time: nowLabel(),
+      };
+      addMsg(userMsg);
+      const docList = Array.from(
+        new Set([appendedDoc.id, docId, ...(rec.extraDocs || []).map((d) => d.id)]),
+      ).filter(Boolean);
+      enqueue(() => runTurn(userMsg, appendedDoc.id, docList, { newDoc: true }));
+      return;
+    }
+
     // Always output the structured summary for the primary document, whether
     // or not the session was started with a prompt, and even if a prior turn
     // persisted messages without ever producing the summary.
-    if (docId && !restored.some((m) => m.kind === "summary")) {
+    if (docId && (pendingFile || !restored.some((m) => m.kind === "summary"))) {
       const lastUser = [...restored]
         .reverse()
         .find((m) => m.role === "user" && (m.content || "").trim());
@@ -751,11 +922,17 @@ export default function Chat() {
 
   useEffect(() => {
     const state = location.state || {};
+    // Guard against React StrictMode's double-invoke (and any re-run for the
+    // same navigation), which would otherwise consume the pending attachment
+    // twice and race two hydrations against each other.
+    if (handledKeyRef.current === location.key) return;
+    handledKeyRef.current = location.key;
     const sid =
       state.sessionId || state.uploadId || sessionStorage.getItem("researchlab.uploadId") || null;
     if (!sid) return;
-    if (startedRef.current && sessionIdRef.current === sid) return;
     const pending = takePendingAttachment(sid);
+    const hasConversion = Boolean(state.conversion?.downloadUrl);
+    if (startedRef.current && sessionIdRef.current === sid && !pending && !hasConversion) return;
     hydrate(sid, state, pending);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key]);
@@ -771,11 +948,19 @@ export default function Chat() {
 
   useEffect(() => {
     if (!sessionId) return;
+    const existing = getSession(sessionId);
+    if (extraDocs.length === 0 && existing && existing.extraDocs && existing.extraDocs.length) {
+      return;
+    }
     updateSession(sessionId, { extraDocs });
   }, [extraDocs, sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
+    const existing = getSession(sessionId);
+    if (webSources.length === 0 && existing && existing.webSources && existing.webSources.length) {
+      return;
+    }
     updateSession(sessionId, { webSources });
   }, [webSources, sessionId]);
 
@@ -850,6 +1035,47 @@ export default function Chat() {
 
     const userMsg = { id: uid(), role: "user", kind: "text", content: q, pdfName: attach ? name : null, time: nowLabel() };
     addMsg(userMsg);
+
+    if (docId && detectGradeRequest(q)) {
+      const aspects = detectGradeAspects(q);
+      const wantsPlagiarism =
+        aspects === null || aspects.includes("plagiarism") || detectPlagiarismRequested(q);
+      const intent = detectGradeSourceIntent(q);
+      const others = docIdList.filter((id) => id !== docId);
+      const canCompareUploads = others.length > 0;
+      const webOn = webSearchRef.current;
+
+      if (wantsPlagiarism) {
+        if (intent === "uploads" && !canCompareUploads) {
+          addAssistant(
+            "The source tab has no other relevant files to compare this paper against, so I can't run the plagiarism check.",
+          );
+          return;
+        }
+        if (intent === "web" && !webOn) {
+          showGradeNotice("Web search is off, unable to complete the grading system.");
+          return;
+        }
+        if (!canCompareUploads && !webOn) {
+          showGradeNotice("Web search is off, unable to complete the grading system.");
+          return;
+        }
+        addGradePermission({
+          docId,
+          docIdList,
+          aspects,
+          canCompareUploads,
+          webOn,
+          allowUploads: canCompareUploads && intent !== "web",
+          allowWeb: webOn && intent !== "uploads",
+        });
+        return;
+      }
+
+      enqueue(() => runGrade({ docId, docIdList, aspects, allowUploads: false, allowWeb: false }));
+      return;
+    }
+
     enqueue(() => runTurn(userMsg, docId, docIdList, { newDoc: Boolean(attach) }));
   };
 
@@ -857,7 +1083,12 @@ export default function Chat() {
   useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
   const copyResponse = ({ msg }) => {
-    const plain = msg.kind === "summary" ? summaryToText(msg.sections) : msg.content;
+    const plain =
+      msg.kind === "summary"
+        ? summaryToText(msg.sections)
+        : msg.kind === "grade"
+          ? gradeToText(msg.grade)
+          : msg.content;
     const cleaned = Stripper(plain);
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(cleaned).catch(() => legacyCopy(cleaned));
@@ -873,7 +1104,12 @@ export default function Chat() {
     const index = messagesRef.current.findIndex((m) => m.id === msg.id);
     const prior = messagesRef.current.slice(0, index).filter((m) => m.role === "user");
     const prompt = prior.length ? prior[prior.length - 1].content || "" : "";
-    const body = msg.kind === "summary" ? summaryToText(msg.sections) : msg.content;
+    const body =
+      msg.kind === "summary"
+        ? summaryToText(msg.sections)
+        : msg.kind === "grade"
+          ? gradeToText(msg.grade)
+          : msg.content;
     const chunk = `# ${prompt}\n\n${Stripper(body || "")}\n\n`;
     setNoteText((prev) => (prev ? prev + chunk : chunk));
     notify("Added to the notepad!");
@@ -885,6 +1121,7 @@ export default function Chat() {
     () => () => {
       clearTimeout(toastTimerRef.current);
       clearTimeout(noteSaveRef.current);
+      clearTimeout(gradeNoticeTimerRef.current);
     },
     [],
   );
@@ -1257,6 +1494,19 @@ export default function Chat() {
           </div>
         </div>
       )}
+      {gradeNotice && (
+        <div className="pointer-events-none absolute left-1/2 top-[76px] -translate-x-1/2 w-max max-w-[80%] z-[70]">
+          <div className="backdrop-blur-[12px] bg-[rgba(17,20,29,0.96)] border border-[#7f1d1d] border-solid drop-shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.3),0px_4px_6px_-4px_rgba(0,0,0,0.3)] flex items-center gap-[8px] px-[14px] py-[9px] rounded-[10px]">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v4M12 16h.01" />
+            </svg>
+            <span className="font-inter font-medium text-[13px] text-[#fecaca] leading-[18px]">
+              {gradeNotice}
+            </span>
+          </div>
+        </div>
+      )}
       {confirmClearOpen && (
         <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/60">
           <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[360px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]">
@@ -1403,6 +1653,7 @@ export default function Chat() {
                   openableFor={isCitationOpenable}
                   annotations={annotations}
                   onAnnotate={handleAnswerAnnotate}
+                  onGradeRun={startGradeFromPermission}
                 />
               ))}
               {busy !== "idle" && (
@@ -1412,7 +1663,9 @@ export default function Chat() {
                     <span className="font-inter text-[13px] text-[#94a3b8] leading-[18px]">
                       {busy === "analyzing"
                         ? "Analyzing the paper — generating the structured summary…"
-                        : "Consulting the paper and the web…"}
+                        : busy === "grading"
+                          ? "Grading the paper against the rubric…"
+                          : "Consulting the paper and the web…"}
                     </span>
                   </div>
                 </div>

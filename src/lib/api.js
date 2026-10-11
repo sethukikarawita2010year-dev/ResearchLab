@@ -70,6 +70,22 @@ export function incrementFolderApi(name) {
   return jsonFetch(`/folders/${encodeURIComponent(name)}/increment`, { method: "POST" });
 }
 
+export async function renameFolderApi(name, newName) {
+  const data = await jsonFetch(`/folders/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    body: { name: newName },
+  });
+  return Array.isArray(data.folders) ? data.folders : [];
+}
+
+export async function deleteFolderApi(name, deleteChats) {
+  const data = await jsonFetch(
+    `/folders/${encodeURIComponent(name)}?delete_chats=${deleteChats ? "true" : "false"}`,
+    { method: "DELETE" },
+  );
+  return Array.isArray(data.folders) ? data.folders : [];
+}
+
 // --- Uploads / conversions -------------------------------------------------
 
 export async function uploadPdf(file) {
@@ -133,6 +149,27 @@ export function chatMessage({
       web_search: webSearch,
       language,
       annotations,
+    },
+  });
+}
+
+export function gradePaper({
+  documentId,
+  documentIds = [],
+  aspects = null,
+  language = "auto",
+  allowUploads = false,
+  allowWeb = false,
+}) {
+  return jsonFetch("/grade", {
+    method: "POST",
+    body: {
+      document_id: documentId,
+      document_ids: documentIds,
+      aspects,
+      language,
+      allow_uploads: allowUploads,
+      allow_web: allowWeb,
     },
   });
 }

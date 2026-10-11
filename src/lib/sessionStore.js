@@ -102,11 +102,43 @@ export function deleteSession(id) {
   deleteSessionApi(id).catch(() => {});
 }
 
+// --- Folder-driven local mutations -----------------------------------------
+// These mirror the DB changes the folder endpoints already made server-side,
+// so the in-memory cache stays in sync without re-persisting each chat.
+
+export function countSessionsInFolder(name) {
+  return sessions.filter((s) => s.folder === name).length;
+}
+
+export function reassignFolder(fromName, toName) {
+  let changed = false;
+  sessions = sessions.map((s) => {
+    if (s.folder === fromName) {
+      changed = true;
+      return { ...s, folder: toName };
+    }
+    return s;
+  });
+  if (changed) emit();
+}
+
+export function removeFolderSessions(name) {
+  const next = sessions.filter((s) => s.folder !== name);
+  if (next.length !== sessions.length) {
+    sessions = next;
+    emit();
+  }
+}
+
 function subscribe(listener) {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
+}
+
+export function subscribeSessions(subscriber) {
+  return subscribe(subscriber);
 }
 
 export function useSessions() {

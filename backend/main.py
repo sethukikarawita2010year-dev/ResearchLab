@@ -48,6 +48,7 @@ from store import (
     UploadedDoc,
     router as store_router,
 )
+import grading
 import llm
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -137,6 +138,15 @@ class ChatRequest(BaseModel):
 
 class ResolveSourceRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
+
+
+class GradeRequest(BaseModel):
+    document_id: str = Field(min_length=1)
+    document_ids: list[str] = Field(default_factory=list)
+    aspects: list[str] | None = None
+    language: str = Field(default="auto")
+    allow_uploads: bool = False
+    allow_web: bool = False
 
 
 def _extract_title(markup: str) -> str:
@@ -393,6 +403,52 @@ def chat(payload: ChatRequest, user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"AI chat failed: {exc}") from exc
+
+
+@app.post("/api/grade")
+def grade_paper(payload: GradeRequest, user: dict = Depends(get_current_user)) -> dict:
+    docs: list[dict] = []
+    seen: set[str] = set()
+
+    def add_doc(doc_id: str, required: bool = False) -> None:
+        if doc_id in seen:
+            return
+        seen.add(doc_id)
+        try:
+            doc_path = _resolve_upload(doc_id, user["id"])
+        except HTTPException:
+            if required:
+                raise
+            return
+        with SessionLocal() as db:
+            record = db.get(UploadedDoc, doc_id)
+        docs.append(
+            {
+                "id": doc_id,
+                "filename": (record.filename if record else None) or doc_path.name,
+                "path": doc_path,
+            }
+        )
+
+    add_doc(payload.document_id, required=True)
+    for extra_id in payload.document_ids:
+        if extra_id != payload.document_id:
+            add_doc(extra_id)
+
+    try:
+        return grading.grade(
+            docs,
+            payload.aspects,
+            payload.language,
+            allow_uploads=payload.allow_uploads,
+            allow_web=payload.allow_web,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI grading failed: {exc}") from exc
 
 
 class _ReadableParser(HTMLParser):

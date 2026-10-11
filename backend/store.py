@@ -12,6 +12,8 @@ Endpoints (mounted by ``main.py`` at ``/api``):
     DELETE /api/sessions/{id}         delete a chat session
     GET    /api/folders               list the user's folders (seeds defaults)
     POST   /api/folders               create a folder
+    PATCH  /api/folders/{name}        rename a folder (and its chats)
+    DELETE /api/folders/{name}        delete a folder; optionally delete its chats
     POST   /api/folders/{name}/increment   bump a folder's item count
 """
 
@@ -23,7 +25,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, Text, select
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, Text, func, or_, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from auth import Base, SessionLocal, engine, get_current_user
@@ -276,10 +278,38 @@ def _ensure_default_folders(db, user_id: int) -> None:
 def list_folders(user: dict = Depends(get_current_user)) -> dict:
     with SessionLocal() as db:
         _ensure_default_folders(db, user["id"])
-        rows = db.scalars(
-            select(Folder).where(Folder.user_id == user["id"]).order_by(Folder.count.desc(), Folder.id.asc())
-        ).all()
-        return {"folders": [serialize_folder(r) for r in rows]}
+        stored = {
+            row.name: row
+            for row in db.scalars(
+                select(Folder).where(Folder.user_id == user["id"])
+            ).all()
+        }
+
+        # Folder counts reflect the user's real chats, not a drifting increment
+        # counter. A chat counts once it owns an uploaded document or has
+        # produced any messages (so empty/aborted sessions are ignored).
+        real_chat = or_(
+            ChatSession.upload_id.is_not(None),
+            ChatSession.messages.not_in(["", "[]"]),
+        )
+        counts = dict(
+            db.execute(
+                select(ChatSession.folder, func.count(ChatSession.id))
+                .where(ChatSession.user_id == user["id"], real_chat)
+                .group_by(ChatSession.folder)
+            ).all()
+        )
+        total = sum(counts.values())
+
+        names = set(stored.keys())
+        names.update(counts.keys())
+        folders = []
+        for name in names:
+            muted = bool(stored[name].muted) if name in stored else True
+            count = total if name == "All Papers" else counts.get(name, 0)
+            folders.append({"name": name, "count": str(count), "muted": muted})
+        folders.sort(key=lambda f: (-int(f["count"]), f["name"]))
+        return {"folders": folders}
 
 
 @router.post("/folders", status_code=201)
@@ -314,3 +344,83 @@ def increment_folder(name: str, user: dict = Depends(get_current_user)) -> dict:
         db.commit()
         db.refresh(row)
         return serialize_folder(row)
+
+
+def _folder_list(db, user_id: int) -> list[dict]:
+    rows = db.scalars(
+        select(Folder)
+        .where(Folder.user_id == user_id)
+        .order_by(Folder.count.desc(), Folder.id.asc())
+    ).all()
+    return [serialize_folder(r) for r in rows]
+
+
+class FolderRename(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+@router.patch("/folders/{name}")
+def rename_folder(
+    name: str, payload: FolderRename, user: dict = Depends(get_current_user)
+) -> dict:
+    old = (name or "").strip()
+    new = (payload.name or "").strip()
+    if not old or not new:
+        raise HTTPException(status_code=422, detail="Folder name is required.")
+    if old == "All Papers":
+        raise HTTPException(status_code=400, detail="The All Papers folder cannot be renamed.")
+    with SessionLocal() as db:
+        row = db.scalar(select(Folder).where(Folder.user_id == user["id"], Folder.name == old))
+        if row is None:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        # Move every chat under the old name to the new name so nothing is orphaned.
+        db.query(ChatSession).filter(
+            ChatSession.user_id == user["id"], ChatSession.folder == old
+        ).update({ChatSession.folder: new}, synchronize_session=False)
+        if new != old:
+            target = db.scalar(
+                select(Folder).where(
+                    Folder.user_id == user["id"], Folder.name == new, Folder.id != row.id
+                )
+            )
+            if target is not None:
+                # Merging into an existing folder: fold the counts together.
+                target.count = int(target.count or 0) + int(row.count or 0)
+                db.delete(row)
+            else:
+                row.name = new
+        db.commit()
+        return {"folders": _folder_list(db, user["id"])}
+
+
+@router.delete("/folders/{name}")
+def delete_folder(
+    name: str, delete_chats: bool = False, user: dict = Depends(get_current_user)
+) -> dict:
+    target = (name or "").strip()
+    if not target:
+        raise HTTPException(status_code=422, detail="Folder name is required.")
+    if target == "All Papers":
+        raise HTTPException(status_code=400, detail="The All Papers folder cannot be deleted.")
+    with SessionLocal() as db:
+        row = db.scalar(select(Folder).where(Folder.user_id == user["id"], Folder.name == target))
+        if row is None:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        chats = db.query(ChatSession).filter(
+            ChatSession.user_id == user["id"], ChatSession.folder == target
+        )
+        if delete_chats:
+            removed = chats.count()
+            chats.delete(synchronize_session=False)
+            all_papers = db.scalar(
+                select(Folder).where(Folder.user_id == user["id"], Folder.name == "All Papers")
+            )
+            if all_papers is None:
+                all_papers = Folder(user_id=user["id"], name="All Papers", count=0, muted=False)
+                db.add(all_papers)
+            all_papers.count = max(0, int(all_papers.count or 0) - removed)
+        else:
+            chats.update({ChatSession.folder: "All Papers"}, synchronize_session=False)
+        db.delete(row)
+        db.commit()
+        return {"folders": _folder_list(db, user["id"])}
