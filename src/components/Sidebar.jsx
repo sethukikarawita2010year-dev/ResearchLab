@@ -1,31 +1,17 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { createFolder, useFolders } from "../lib/folderStore";
+import { useLayoutEffect, useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { createFolder, deleteFolder, renameFolder, useFolders } from "../lib/folderStore";
 import { useSessions, updateSession, deleteSession } from "../lib/sessionStore";
 import { useSidebar } from "./sidebarContext";
+import { useSettings } from "./settingsContext";
+import { useAuth } from "./AuthProvider";
+import Avatar from "./Avatar";
 
 const A = "/assets";
 
-const historyGroups = [
-  {
-    label: "Yesterday",
-    items: [
-      { title: "LoRA: Low-Rank Adaptation", to: "/chat" },
-      { title: "Constitutional AI: Harmlessness from AI Feedback", to: "/chat" },
-    ],
-  },
-  {
-    label: "Previous 7 days",
-    items: [
-      { title: "FlashAttention: Fast & Memory-Efficient", to: "/chat" },
-      { title: "Chain-of-Thought Prompting Elicits Reasoning", to: "/chat" },
-      { title: "Retrieval-Augmented Generation Benchmark", to: "/chat" },
-    ],
-  },
-];
-
 export default function Sidebar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [selectedFolder, setSelectedFolder] = useState("All Papers");
   const [selectedChat, setSelectedChat] = useState("");
   const folderList = useFolders();
@@ -34,10 +20,46 @@ export default function Sidebar() {
   const [newFolderName, setNewFolderName] = useState("");
   const [editingChatId, setEditingChatId] = useState("");
   const [editDraft, setEditDraft] = useState("");
-  const [renamedTitles, setRenamedTitles] = useState({});
-  const [hiddenTitles, setHiddenTitles] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [editingFolder, setEditingFolder] = useState("");
+  const [folderDraft, setFolderDraft] = useState("");
+  const [folderDeleteTarget, setFolderDeleteTarget] = useState(null);
   const { collapsed, toggle } = useSidebar();
+  const { toggleSettings } = useSettings();
+  const { user } = useAuth();
+  const nameLines = (() => {
+    const first = (user?.first_name || "").trim();
+    const last = (user?.last_name || "").trim();
+    if (first || last) return [first, last].filter(Boolean);
+    return [user?.full_name || "ResearchLab User"];
+  })();
+  const firstLine = nameLines[0] || "";
+  const secondLine = nameLines[1] || "";
+  const hasBothNames = Boolean(firstLine && secondLine);
+  const joinedName = nameLines.join(" ");
+
+  const nameAreaRef = useRef(null);
+  const nameMeasureRef = useRef(null);
+  const [stackName, setStackName] = useState(false);
+
+  useLayoutEffect(() => {
+    const area = nameAreaRef.current;
+    const measureEl = nameMeasureRef.current;
+    if (!area || !measureEl) return undefined;
+    const measure = () => {
+      const textWidth = measureEl.getBoundingClientRect().width;
+      setStackName(hasBothNames && textWidth > area.clientWidth + 0.5);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(area);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [joinedName, hasBothNames]);
+
   const folderHighlightRef = useRef(null);
   const folderRowsRef = useRef(null);
   const folderRowRefs = useRef({});
@@ -53,13 +75,6 @@ export default function Sidebar() {
     const next = editDraft.trim();
     if (item.sessionId) {
       updateSession(item.sessionId, { title: next || item.title });
-    } else {
-      setRenamedTitles((prev) => {
-        const copy = { ...prev };
-        if (next) copy[item.originalTitle] = next;
-        else delete copy[item.originalTitle];
-        return copy;
-      });
     }
     setEditingChatId("");
   };
@@ -69,10 +84,25 @@ export default function Sidebar() {
     if (!item) return;
     if (item.sessionId) {
       deleteSession(item.sessionId);
-    } else {
-      setHiddenTitles((prev) => ({ ...prev, [item.originalTitle]: true }));
     }
     setDeleteTarget(null);
+  };
+
+  const commitFolderRename = () => {
+    const name = editingFolder;
+    const next = folderDraft.trim();
+    setEditingFolder("");
+    if (!name || !next || next === name) return;
+    renameFolder(name, next);
+    if (selectedFolder === name) setSelectedFolder(next);
+  };
+
+  const confirmFolderDelete = (deleteChats) => {
+    const name = folderDeleteTarget;
+    setFolderDeleteTarget(null);
+    if (!name) return;
+    deleteFolder(name, deleteChats);
+    if (selectedFolder === name) setSelectedFolder("All Papers");
   };
 
   const todays = sessions.filter(
@@ -90,17 +120,6 @@ export default function Sidebar() {
         to: "/chat",
       })),
     },
-    ...historyGroups.map((g) => ({
-      label: g.label,
-      items: g.items
-        .filter((it) => !hiddenTitles[it.title])
-        .map((it) => ({
-          key: it.title,
-          originalTitle: it.title,
-          title: it.title,
-          to: it.to,
-        })),
-    })),
   ].filter((g) => g.items.length > 0);
 
   useLayoutEffect(() => {
@@ -128,6 +147,23 @@ export default function Sidebar() {
       rowsWrap.style.maxHeight = "";
     }
   }, [selectedFolder, folderList]);
+
+  const syncedChatKeyRef = useRef(null);
+  useEffect(() => {
+    if (location.pathname !== "/chat") return;
+    if (syncedChatKeyRef.current === location.key) return;
+    syncedChatKeyRef.current = location.key;
+    const sid =
+      location.state?.sessionId ||
+      location.state?.uploadId ||
+      sessionStorage.getItem("researchlab.uploadId");
+    if (!sid) return;
+    const current = sessions.find((s) => s.id === sid);
+    setSelectedChat(`s-${sid}`);
+    // Reveal the chat even when it lives in a folder other than the one
+    // currently filtered in the sidebar.
+    if (current?.folder) setSelectedFolder(current.folder);
+  }, [location.key, location.pathname, location.state, sessions]);
 
   return (
     <aside
@@ -179,7 +215,7 @@ export default function Sidebar() {
           <div className="content-stretch flex flex-col items-start px-[16px] py-[12px] relative shrink-0 w-full">
             <button
               type="button"
-              onClick={() => navigate("/")}
+              onClick={() => navigate("/library")}
               className="bg-[#6366f1] drop-shadow-[0px_1px_1px_rgba(99,102,241,0.25)] flex gap-[8px] items-center justify-center px-[12px] py-[8px] relative rounded-[8px] shrink-0 w-full cursor-pointer"
             >
               <div className="relative shrink-0 size-[10.5px]">
@@ -253,20 +289,31 @@ export default function Sidebar() {
                 />
                 {folderList.map((f) => {
                   const isSelected = f.name === selectedFolder;
+                  const isRenaming = editingFolder === f.name;
+                  const canManage = f.name !== "All Papers";
                   return (
-                    <button
+                    <div
                       key={f.name}
                       ref={(el) => {
                         folderRowRefs.current[f.name] = el;
                       }}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       aria-pressed={isSelected}
-                      onClick={() => setSelectedFolder(f.name)}
-                      className={`content-stretch flex items-center justify-between px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full cursor-pointer ${
+                      onClick={() => {
+                        if (!isRenaming) setSelectedFolder(f.name);
+                      }}
+                      onKeyDown={(e) => {
+                        if ((e.key === "Enter" || e.key === " ") && !isRenaming) {
+                          e.preventDefault();
+                          setSelectedFolder(f.name);
+                        }
+                      }}
+                      className={`group content-stretch flex items-center justify-between gap-[6px] px-[8px] py-[4px] relative rounded-[8px] shrink-0 w-full cursor-pointer ${
                         isSelected ? "" : "hover:bg-[#161922]"
                       }`}
                     >
-                      <div className="content-stretch flex gap-[8px] items-center overflow-clip relative shrink-0">
+                      <div className="content-stretch flex gap-[8px] items-center overflow-clip relative shrink-0 min-w-0 flex-1">
                         <div className="h-[10.667px] relative shrink-0 w-[13.333px]">
                           <img
                             alt=""
@@ -274,22 +321,85 @@ export default function Sidebar() {
                             src={isSelected ? `${A}/ws-folder-active.svg` : `${A}/ws-folder-white.svg`}
                           />
                         </div>
-                        <div className="content-stretch flex flex-col items-center overflow-clip relative shrink-0">
-                          <div
-                            className={`flex flex-col font-inter font-normal justify-center relative shrink-0 text-[13px] text-center whitespace-nowrap ${
-                              isSelected ? "text-white" : "text-[#94a3b8]"
-                            }`}
-                          >
-                            <p className="leading-[18px]">{f.name}</p>
+                        {isRenaming ? (
+                          <input
+                            autoFocus
+                            value={folderDraft}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setFolderDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitFolderRename();
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                setEditingFolder("");
+                              }
+                            }}
+                            onBlur={commitFolderRename}
+                            maxLength={150}
+                            className="bg-[#12151e] border border-[#2a3044] border-solid flex-1 font-inter font-normal min-w-px outline-none px-[6px] py-[1px] rounded-[4px] text-[13px] w-full text-[#f8fafc] focus:border-[#6366f1]"
+                          />
+                        ) : (
+                          <div className="content-stretch flex flex-col items-start overflow-hidden relative min-w-0">
+                            <div
+                              className={`flex flex-col font-inter font-normal justify-center relative text-[13px] text-left overflow-hidden text-ellipsis whitespace-nowrap ${
+                                isSelected ? "text-white" : "text-[#94a3b8]"
+                              }`}
+                            >
+                              <p className="leading-[18px] overflow-hidden text-ellipsis">{f.name}</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {canManage && !isRenaming ? (
+                        <div className="content-stretch flex items-center gap-[2px] shrink-0 group-hover:hidden">
+                          <div className="bg-[#1b202e] border border-[#2a3044] border-solid content-stretch flex flex-col items-center px-[5px] py-[3px] relative rounded-[4px] shrink-0">
+                            <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
+                              <p className="leading-[18px]">{f.count}</p>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="bg-[#1b202e] border border-[#2a3044] border-solid content-stretch flex flex-col items-center px-[5px] py-[3px] relative rounded-[4px] shrink-0">
-                        <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
-                          <p className="leading-[18px]">{f.count}</p>
+                      ) : null}
+                      {canManage && !isRenaming ? (
+                        <div className="hidden group-hover:flex items-center gap-[2px] shrink-0">
+                          <button
+                            type="button"
+                            aria-label={`Rename ${f.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingFolder(f.name);
+                              setFolderDraft(f.name);
+                            }}
+                            className="flex items-center justify-center p-[2px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#e2e8f0] transition-colors"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${f.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFolderDeleteTarget(f.name);
+                            }}
+                            className="flex items-center justify-center p-[2px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#f87171] transition-colors"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />
+                            </svg>
+                          </button>
                         </div>
-                      </div>
-                    </button>
+                      ) : null}
+                      {!canManage ? (
+                        <div className="bg-[#1b202e] border border-[#2a3044] border-solid content-stretch flex flex-col items-center px-[5px] py-[3px] relative rounded-[4px] shrink-0">
+                          <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
+                            <p className="leading-[18px]">{f.count}</p>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
@@ -307,9 +417,7 @@ export default function Sidebar() {
                 </div>
                 {group.items.map((item) => {
                   const isSelected = item.key === selectedChat;
-                  const displayTitle = item.sessionId
-                    ? item.title
-                    : renamedTitles[item.originalTitle] || item.title;
+                  const displayTitle = item.title;
                   const isEditing = editingChatId === item.key;
                   return (
                     <Link
@@ -418,39 +526,54 @@ export default function Sidebar() {
 
       <div className="bg-[#11141d] border-[#1e2230] border-solid border-t relative shrink-0 w-full">
         <div className="flex flex-col items-start pb-[12px] pt-[13px] px-[12px] relative size-full">
-          <div className="bg-[#161922] border border-[#2a3044] border-solid drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] relative rounded-[8px] shrink-0 w-full">
+          <div className="bg-[#161922] drop-shadow-[0px_1px_1px_rgba(0,0,0,0.05)] relative rounded-[8px] shrink-0 w-full">
             <div className="flex items-center justify-between p-[5px] relative size-full">
-              <div className="relative shrink-0">
-                <div className="flex gap-[8px] items-center relative size-full">
-                  <div className="bg-[#6366f1] content-stretch flex items-center justify-center relative rounded-[9999px] shrink-0 size-[32px]">
-                    <div className="relative shrink-0 size-[12px]">
-                      <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-avatar-user.svg`} />
-                    </div>
-                  </div>
-                  <div className="content-stretch flex flex-col items-start relative shrink-0">
-                    <div className="content-stretch flex flex-col items-start overflow-clip relative shrink-0 w-full">
-                      <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#f8fafc] text-[13px] tracking-[0.13px] whitespace-nowrap">
-                        <p className="leading-[16px]">Dr. Sarah Jenkins</p>
-                      </div>
-                    </div>
-                    <div className="content-stretch flex flex-col items-start overflow-clip relative shrink-0 w-full">
-                      <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[#94a3b8] text-[11px] tracking-[0.33px] whitespace-nowrap">
-                        <p className="leading-[14px]">Senior Fellow</p>
-                      </div>
+              <div className="relative min-w-0 flex-1">
+                <div className="flex gap-[8px] items-center relative size-full min-w-0">
+                  <Avatar user={user} size={32} />
+                  <div className="content-stretch flex flex-col items-start overflow-clip relative min-w-0 flex-1">
+                    <div
+                      ref={nameAreaRef}
+                      className="content-stretch flex flex-col items-start overflow-clip relative w-full"
+                    >
+                      <span
+                        ref={nameMeasureRef}
+                        aria-hidden="true"
+                        className="invisible absolute whitespace-nowrap pointer-events-none font-inter font-semibold text-[13px] tracking-[0.13px]"
+                      >
+                        {joinedName}
+                      </span>
+                      {stackName ? (
+                        <>
+                          <p className="leading-[16px] whitespace-nowrap font-inter font-semibold text-[#f8fafc] text-[13px] tracking-[0.13px]">
+                            {firstLine}
+                          </p>
+                          <p className="leading-[16px] whitespace-nowrap font-inter font-semibold text-[#f8fafc] text-[13px] tracking-[0.13px]">
+                            {secondLine}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="leading-[16px] whitespace-nowrap font-inter font-semibold text-[#f8fafc] text-[13px] tracking-[0.13px]">
+                          {joinedName}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
               </div>
               <div className="relative shrink-0">
                 <div className="flex items-center relative size-full">
-                  <Link
-                    to="/login"
-                    className="content-stretch flex flex-col items-center justify-center pb-[8px] pt-[4px] px-[2px] relative rounded-[4px] shrink-0"
+                  <button
+                    type="button"
+                    onClick={toggleSettings}
+                    aria-label="Open settings"
+                    title="Settings"
+                    className="content-stretch flex flex-col items-center justify-center pb-[8px] pt-[4px] px-[2px] relative rounded-[4px] shrink-0 cursor-pointer"
                   >
                     <div className="h-[13.333px] relative shrink-0 w-[13.4px]">
                       <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-settings.svg`} />
                     </div>
-                  </Link>
+                  </button>
                 </div>
               </div>
             </div>
@@ -458,6 +581,50 @@ export default function Sidebar() {
         </div>
       </div>
       </div>
+      {folderDeleteTarget && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+          <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[380px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]">
+            <div className="flex gap-[10px] items-center">
+              <div className="bg-[rgba(69,26,26,0.6)] border border-[rgba(153,27,27,0.4)] border-solid flex items-center justify-center rounded-[8px] shrink-0 size-[34px]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />
+                </svg>
+              </div>
+              <div className="flex flex-col font-inter font-semibold justify-center relative shrink-0 text-[16px] text-white tracking-[-0.16px]">
+                <p className="leading-[24px]">Delete this folder?</p>
+              </div>
+            </div>
+            <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px]">
+              <p className="leading-[20px]">
+                Do you also want to delete the chats inside “{folderDeleteTarget}”? If you choose not to, those chats move to All Papers.
+              </p>
+            </div>
+            <div className="flex flex-col gap-[8px] w-full">
+              <button
+                type="button"
+                onClick={() => confirmFolderDelete(true)}
+                className="bg-[#dc2626] border border-[#dc2626] border-solid rounded-[8px] w-full py-[8px] font-inter font-medium text-[13px] text-white cursor-pointer hover:bg-[#b91c1c] transition-colors"
+              >
+                Yes, delete chats too
+              </button>
+              <button
+                type="button"
+                onClick={() => confirmFolderDelete(false)}
+                className="bg-[#1a1e2b] border border-[#2a3044] border-solid rounded-[8px] w-full py-[8px] font-inter font-medium text-[13px] text-[#cbd5e1] cursor-pointer hover:bg-[#20263a] transition-colors"
+              >
+                No, keep chats
+              </button>
+              <button
+                type="button"
+                onClick={() => setFolderDeleteTarget(null)}
+                className="bg-transparent border-0 w-full py-[4px] font-inter font-medium text-[12px] text-[#94a3b8] cursor-pointer hover:text-[#e2e8f0] transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {deleteTarget && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
           <div className="bg-[#161922] border border-[#2a3044] border-solid flex flex-col gap-[16px] items-start max-w-[360px] w-[calc(100%-48px)] p-[24px] rounded-[12px] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.5)]">

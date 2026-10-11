@@ -9,7 +9,7 @@ const A = "/assets";
 export default function Workspace() {
   const folders = useFolders();
   const { collapsed } = useSidebar();
-  const [selectedFolder, setSelectedFolder] = useState("ML Papers");
+  const [selectedFolder, setSelectedFolder] = useState("All Papers");
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const folderTriggerRef = useRef(null);
   const folderPopupRef = useRef(null);

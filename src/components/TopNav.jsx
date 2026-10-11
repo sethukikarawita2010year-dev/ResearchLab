@@ -2,6 +2,8 @@ import { forwardRef, useLayoutEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePdfSlide } from "./PdfSlide";
 import { useSidebar } from "./sidebarContext";
+import { useAuth } from "./AuthProvider";
+import Avatar from "./Avatar";
 
 const A = "/assets";
 
@@ -29,6 +31,7 @@ const Tab = forwardRef(function Tab({ label, active, onClick }, ref) {
 export default function TopNav() {
   const { isOpen, open, close } = usePdfSlide();
   const { collapsed } = useSidebar();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const tabsRef = useRef(null);
   const pillRef = useRef(null);
@@ -77,10 +80,8 @@ export default function TopNav() {
             <div className="h-[13.5px] mr-[-14px] relative shrink-0 w-[21.5px] z-[2]">
               <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-bell.svg`} />
             </div>
-            <div className="bg-[#6366f1] content-stretch flex items-center justify-center relative rounded-[9999px] shrink-0 size-[32px] z-[1]">
-              <div className="relative shrink-0 size-[12px]">
-                <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/ws-avatar-user.svg`} />
-              </div>
+            <div className="z-[1]">
+              <Avatar user={user} size={32} />
             </div>
           </div>
         </div>

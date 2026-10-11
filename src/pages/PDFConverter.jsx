@@ -73,53 +73,6 @@ const rowFromRecord = (rec) => {
   };
 };
 
-const initialConversions = [
-  {
-    name: "Transformer_Attention_Notes.md",
-    meta: "Markdown Schema · 3 MathJax Equations",
-    icon: `${A}/pc-md.svg`,
-    iconCls: "h-[10px] w-[16.667px]",
-    format: "MD",
-    size: "420 KB",
-    date: "Today, 11:20 AM",
-    folder: "Thesis",
-    ts: Date.parse("2026-10-09T11:20:00"),
-  },
-  {
-    name: "Model_Ablation_Study_Data.xlsx",
-    meta: "Spreadsheet · 14 Tables Synthesized",
-    icon: `${A}/pc-xlsx.svg`,
-    iconCls: "size-[15px]",
-    format: "XLSX",
-    size: "1.2 MB",
-    date: "Yesterday",
-    folder: "ML Papers",
-    ts: Date.parse("2026-10-08T12:00:00"),
-  },
-  {
-    name: "NeurIPS_Presentation_Draft.pptx",
-    meta: "Keynote Presentation · 42 Slides",
-    icon: `${A}/pc-pptx.svg`,
-    iconCls: "size-[15px]",
-    format: "PPTX",
-    size: "8.4 MB",
-    date: "Oct 24, 2024",
-    folder: "All Papers",
-    ts: Date.parse("2024-10-24T00:00:00"),
-  },
-  {
-    name: "Survey_Human_Evaluation.csv",
-    meta: "Dataset Matrix · 2,800 Cohort Records",
-    icon: `${A}/pc-csv.svg`,
-    iconCls: "size-[15px]",
-    format: "CSV",
-    size: "310 KB",
-    date: "Oct 22, 2024",
-    folder: "Biomedical AI",
-    ts: Date.parse("2024-10-22T00:00:00"),
-  },
-];
-
 export default function PDFConverter() {
   const folders = useFolders();
   const sessions = useSessions();
@@ -133,11 +86,11 @@ export default function PDFConverter() {
   const [isConverting, setIsConverting] = useState(false);
   const [convertedPdf, setConvertedPdf] = useState(null);
   const [conversionError, setConversionError] = useState(null);
-  const [selectedFolder, setSelectedFolder] = useState("ML Papers");
+  const [selectedFolder, setSelectedFolder] = useState("All Papers");
   const [isFolderOpen, setIsFolderOpen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [conversionSeconds, setConversionSeconds] = useState(null);
-  const [conversionRows, setConversionRows] = useState(initialConversions);
+  const [conversionRows, setConversionRows] = useState([]);
   const [filterMode, setFilterMode] = useState("Newest");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [transfer, setTransfer] = useState({ open: false, row: null, folder: null });
@@ -216,7 +169,7 @@ export default function PDFConverter() {
     if (!downloadUrl) return;
     try {
       const url = conversionDownloadUrl(downloadUrl);
-      const res = await fetch(url);
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Download failed.");
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -245,7 +198,7 @@ export default function PDFConverter() {
     try {
       if (row?.downloadUrl) {
         const url = conversionDownloadUrl(row.downloadUrl);
-        const res = await fetch(url);
+        const res = await fetch(url, { credentials: "include" });
         if (!res.ok) throw new Error("Could not load the converted PDF.");
         const blob = await res.blob();
         const filename = row.pdfFilename || row.name || "document.pdf";
@@ -264,6 +217,11 @@ export default function PDFConverter() {
         uploadId: session.id,
         pdfName: session.pdfName,
         title: session.title,
+        // Deliver the converted PDF by reference too, so the chat can attach
+        // it even if the in-memory hand-off is lost (StrictMode, remount).
+        conversion: row?.downloadUrl
+          ? { downloadUrl: row.downloadUrl, filename: row.pdfFilename || row.name || "document.pdf" }
+          : null,
       },
     });
   };
@@ -562,6 +520,7 @@ export default function PDFConverter() {
                         </div>
                       </div>
 
+                      {!isConverted && (
                       <div className="flex items-center justify-between pt-[8px] relative shrink-0 w-full">
                         <div className="bg-[#11141d] border border-[#1e2230] border-solid flex gap-[4px] items-center px-[13px] py-[5px] relative rounded-[8px] shrink-0">
                           {isConverted && (
@@ -706,6 +665,7 @@ export default function PDFConverter() {
                           )}
                         </div>
                       </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -800,11 +760,10 @@ export default function PDFConverter() {
                 <table className="border-collapse w-full">
                   <colgroup>
                     <col style={{ width: "34%" }} />
-                    <col style={{ width: "14%" }} />
-                    <col style={{ width: "11%" }} />
-                    <col style={{ width: "14%" }} />
-                    <col style={{ width: "16%" }} />
-                    <col style={{ width: "11%" }} />
+                    <col style={{ width: "16.5%" }} />
+                    <col style={{ width: "16.5%" }} />
+                    <col style={{ width: "16.5%" }} />
+                    <col style={{ width: "16.5%" }} />
                   </colgroup>
                   <thead>
                     <tr className="bg-[#12151e] border-b border-[#2a3044] border-solid sticky top-0 z-10">
@@ -813,28 +772,22 @@ export default function PDFConverter() {
                           <p className="leading-[14px]">FILE NAME</p>
                         </div>
                       </th>
-                      <th className="text-left px-[11px] py-[12px]">
+                      <th className="text-left px-[17px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">ORIGINAL</p>
                           <p className="leading-[14px]">FORMAT</p>
                         </div>
                       </th>
-                      <th className="text-left px-[11px] py-[12px]">
+                      <th className="text-left px-[17px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">OUTPUT</p>
                           <p className="leading-[14px]">SIZE</p>
                         </div>
                       </th>
-                      <th className="text-left px-[11px] py-[12px]">
+                      <th className="text-left px-[17px] py-[12px]">
                         <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
                           <p className="leading-[14px] mb-0">CONVERTED</p>
                           <p className="leading-[14px]">DATE</p>
-                        </div>
-                      </th>
-                      <th className="text-left pl-[21px] pr-[11px] py-[12px]">
-                        <div className="flex flex-col font-inter font-bold justify-center text-[#94a3b8] text-[11px] tracking-[0.55px] uppercase">
-                          <p className="leading-[14px] mb-0">FOLDER</p>
-                          <p className="leading-[14px]">DESTINATION</p>
                         </div>
                       </th>
                       <th className="text-right px-[17px] py-[19px] align-middle">
@@ -869,31 +822,21 @@ export default function PDFConverter() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-[11px] py-[20px]">
+                        <td className="px-[17px] py-[20px]">
                           <div className="bg-[#222738] border border-[#2a3044] border-solid inline-flex items-start px-[9px] py-[1.5px] relative rounded-[4px]">
                             <div className="flex flex-col font-mono font-medium justify-center relative text-[#e2e8f0] text-[13px] whitespace-nowrap">
                               <p className="leading-[20px]">{row.format}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-[11px] py-[20px]">
+                        <td className="px-[17px] py-[20px]">
                           <div className="flex flex-col font-mono font-normal justify-center relative text-[#94a3b8] text-[13px] whitespace-nowrap">
                             <p className="leading-[20px]">{row.size}</p>
                           </div>
                         </td>
-                        <td className="px-[11px] py-[20px]">
+                        <td className="px-[17px] py-[20px]">
                           <div className="flex flex-col font-inter font-normal justify-center relative text-[#94a3b8] text-[13px] whitespace-nowrap">
                             <p className="leading-[18px]">{row.date}</p>
-                          </div>
-                        </td>
-                        <td className="pl-[21px] pr-[11px] py-[20px]">
-                          <div className="bg-[#222738] border border-[#2a3044] border-solid inline-flex gap-[4px] items-center px-[9px] py-[5px] relative rounded-[9999px]">
-                            <div className="h-[9.333px] relative shrink-0 w-[11.667px]">
-                              <img alt="" className="absolute block inset-0 max-w-none size-full" src={`${A}/pc-folder-small.svg`} />
-                            </div>
-                            <div className="flex flex-col font-inter font-medium justify-center relative shrink-0 text-[#e2e8f0] text-[11px] tracking-[0.33px] whitespace-nowrap">
-                              <p className="leading-[14px]">{row.folder}</p>
-                            </div>
                           </div>
                         </td>
                         <td className="align-middle px-[17px] py-[20px]">

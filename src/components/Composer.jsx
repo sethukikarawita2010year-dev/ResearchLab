@@ -4,7 +4,6 @@ import { usePdfAttachment, PdfFileInput, PdfChip } from "./PdfAttachment";
 import { uploadPdf } from "../lib/api";
 import { useSidebar } from "./sidebarContext";
 import { createSessionRecord } from "../lib/sessionStore";
-import { incrementFolderCount, incrementAllPapers } from "../lib/folderStore";
 
 const A = "/assets";
 
@@ -61,8 +60,6 @@ export default function Composer({
         extraDocs: [],
         webSources: [],
       });
-      incrementFolderCount(destination);
-      incrementAllPapers();
       sessionStorage.setItem("researchlab.pdfName", pdfName);
       sessionStorage.setItem("researchlab.uploadId", uploaded.id);
       sessionStorage.setItem("researchlab.prompt", prompt);

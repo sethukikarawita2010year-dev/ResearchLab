@@ -729,3 +729,107 @@ def chat_answer(
     if web_search is False:
         result["web_search"] = False
     return result
+
+
+# --- Paper grading ---------------------------------------------------------
+
+
+class GradeCitation(BaseModel):
+    section: str | None = None
+    page: int | None = None
+    section_title: str | None = None
+
+
+class GradedAspect(BaseModel):
+    key: str
+    marks: int
+    reasoning: str
+    citations: list[GradeCitation] = []
+
+
+class GradeResult(BaseModel):
+    aspects: list[GradedAspect]
+
+
+def grade_aspects(
+    doc_block: str,
+    specs: list[dict[str, Any]],
+    language: str = "auto",
+    plagiarism_context: str = "",
+    documents: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Grade a paper against the supplied rubric aspects in one model call.
+
+    ``specs`` is a list of ``{key, name, max, criteria}``. The model returns a
+    strict two-sentence reasoning per aspect with inline ``[p. N \u00A7S]``
+    citations; the plagiarism mark is left to the caller (returned as 0).
+    """
+    client = _get_client()
+    rubric = "\n".join(
+        f"- key: {spec['key']} | \"{spec['name']}\" | max {spec['max']} marks | {spec['criteria']}"
+        for spec in specs
+    )
+    instructions = (
+        "You are an academic examiner grading a research paper against a fixed rubric.\n"
+        "Use ONLY the paper text provided. Be strict and evidence-based; do not inflate "
+        "marks and do not reward length by itself.\n\n"
+        "RUBRIC (grade every aspect listed):\n" + rubric + "\n\n"
+    )
+    if plagiarism_context:
+        instructions += (
+            "PLAGIARISM / ORIGINALITY\nThe plagiarism mark is computed by the system and is "
+            "NOT yours to decide. Return only the two-sentence reasoning for the "
+            "'plagiarism' aspect, describing the originality of the writing as indicated by "
+            "the context below. Never mention that you are an AI, never refuse, and never "
+            "invent a similarity percentage of your own. Context:\n"
+            + plagiarism_context
+            + "\n\n"
+        )
+    instructions += (
+        "OUTPUT RULES\n"
+        "- For every aspect return: 'key' (exactly as given), 'marks' (a whole number from 0 "
+        "up to the aspect maximum; for 'plagiarism' return 0), and 'reasoning'.\n"
+        "- 'reasoning' must be EXACTLY two sentences. No more, no fewer. Count the sentences "
+        "yourself before returning.\n"
+        "- Support the reasoning with inline citations in the form [p. PAGE \u00A7SECTION] or "
+        "[p. PAGE], using the printed page numbers, and repeat them in 'citations' with "
+        "'page' and optional 'section' / 'section_title'.\n"
+        "- Never invent page numbers, quotations or facts that are not in the paper.\n"
+        "- Do not add any preface, disclaimer or note about being an AI.\n"
+    ) + _language_prompt(language)
+
+    def call(**extra: Any) -> Any:
+        return _retry_responses(
+            client,
+            model=DEFAULT_MODEL,
+            kind="parse",
+            input=[{"role": "user", "content": doc_block}],
+            instructions=instructions,
+            text_format=GradeResult,
+            **extra,
+        )
+
+    try:
+        response = call(temperature=0.2)
+    except APIStatusError as exc:
+        # Some models reject an explicit temperature; retry once without it.
+        if exc.status_code != 400:
+            raise
+        response = call()
+
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is None:
+        raise RuntimeError("OpenAI returned an empty grading response.")
+
+    aspects: list[dict[str, Any]] = []
+    for aspect in parsed.aspects:
+        reasoning = aspect.reasoning or ""
+        aspects.append(
+            {
+                "key": aspect.key,
+                "marks": aspect.marks,
+                "reasoning": reasoning,
+                "citations": _parse_pdf_refs(reasoning, documents),
+            }
+        )
+    return {"aspects": aspects}
