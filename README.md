@@ -84,6 +84,8 @@ Target schema (`database/schema.sql`, PostgreSQL + pgvector)
 - Optional: a CloudConvert API key (or a self-hosted Gotenberg instance) for the PDF converter
 - Optional: a self-hosted SearXNG instance (Docker) for free web search
 
+>Note for reviewers: the app needs an OpenAI API key to generate summaries, chat answers and grades. Please use your own key. If that is a problem, ask through the assessment submission channel and a temporary, spending-limited key can be provided privately. No real keys are stored in this repository. Web search works without SearXNG (it falls back to OpenAI web search), and the PDF converter is the only feature that needs an extra key (CloudConvert).
+
 ### 1. Clone
 ```bash
 git clone https://github.com/sethukikarawita2010year-dev/ResearchLab.git
@@ -192,3 +194,4 @@ To generate the UI frames I used Google Stitch. I used an AI coding assistant (o
 - The PDF converter needs a conversion service - It requires either a CloudConvert API key or a self-hosted Gotenberg instance. Without one of these configured, the converter won't work, though the rest of the app is unaffected.
 
 - Database: SQLite in the running app - The PostgreSQL + pgvector schema in the docs is a design for scaling up, not what the app runs on. The working app uses SQLite, which needs no setup but is meant for single-user or demo use.
+
