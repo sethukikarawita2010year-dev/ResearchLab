@@ -24,6 +24,9 @@ export default function Sidebar() {
   const [editingFolder, setEditingFolder] = useState("");
   const [folderDraft, setFolderDraft] = useState("");
   const [folderDeleteTarget, setFolderDeleteTarget] = useState(null);
+  const [folderMenu, setFolderMenu] = useState("");
+  const folderMenuRef = useRef(null);
+  const folderIconRef = useRef(null);
   const { collapsed, toggle } = useSidebar();
   const { toggleSettings } = useSettings();
   const { user } = useAuth();
@@ -127,6 +130,17 @@ export default function Sidebar() {
       folderNameInputRef.current.focus();
     }
   }, [isFolderPopupOpen]);
+
+  useEffect(() => {
+    if (!folderMenu) return undefined;
+    const onPointerDown = (event) => {
+      if (folderMenuRef.current?.contains(event.target)) return;
+      if (folderIconRef.current?.contains(event.target)) return;
+      setFolderMenu("");
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [folderMenu]);
 
   useLayoutEffect(() => {
     const highlight = folderHighlightRef.current;
@@ -234,7 +248,7 @@ export default function Sidebar() {
               <div className="content-stretch flex items-center justify-between relative shrink-0 w-full">
                 <div className="content-stretch flex flex-col items-start relative shrink-0">
                   <div className="flex flex-col font-inter font-extrabold justify-center relative shrink-0 text-[#c1cee0] text-[14.6px] tracking-[0.55px] uppercase whitespace-nowrap">
-                    <p className="leading-[20.8px]">Corpus &amp; Folders</p>
+                    <p className="leading-[20.8px]">Folders</p>
                   </div>
                 </div>
                 <button
@@ -291,6 +305,8 @@ export default function Sidebar() {
                   const isSelected = f.name === selectedFolder;
                   const isRenaming = editingFolder === f.name;
                   const canManage = f.name !== "All Papers";
+                  const emptyFolderIcon = isSelected ? `${A}/ws-folder-active.svg` : `${A}/ws-folder-white.svg`;
+                  const fullFolderIcon = isSelected ? `${A}/ws-folder-full-active.svg` : `${A}/ws-folder-full.svg`;
                   return (
                     <div
                       key={f.name}
@@ -314,12 +330,51 @@ export default function Sidebar() {
                       }`}
                     >
                       <div className="content-stretch flex gap-[8px] items-center overflow-clip relative shrink-0 min-w-0 flex-1">
-                        <div className="h-[10.667px] relative shrink-0 w-[13.333px]">
-                          <img
-                            alt=""
-                            className="absolute block inset-0 max-w-none size-full"
-                            src={isSelected ? `${A}/ws-folder-active.svg` : `${A}/ws-folder-white.svg`}
-                          />
+                        <div
+                          ref={canManage && folderMenu === f.name ? folderIconRef : null}
+                          className="shrink-0"
+                        >
+                          {canManage ? (
+                            <button
+                              type="button"
+                              aria-label={`Folder options for ${f.name}`}
+                              aria-expanded={folderMenu === f.name}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFolderMenu((prev) => (prev === f.name ? "" : f.name));
+                              }}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              className="group/icon flex items-center justify-center p-[2px] -m-[2px] rounded-[4px] cursor-pointer"
+                            >
+                              <span className="h-[10.667px] relative block w-[13.333px]">
+                                <img
+                                  alt=""
+                                  className="absolute block inset-0 max-w-none size-full transition-opacity duration-150 group-hover/icon:opacity-0"
+                                  src={emptyFolderIcon}
+                                />
+                                <img
+                                  alt=""
+                                  className="absolute block inset-0 max-w-none size-full opacity-0 transition-opacity duration-150 group-hover/icon:opacity-100"
+                                  src={fullFolderIcon}
+                                />
+                              </span>
+                            </button>
+                          ) : (
+                            <div className="group/icon flex items-center justify-center p-[2px] -m-[2px] rounded-[4px]">
+                              <span className="h-[10.667px] relative block w-[13.333px]">
+                                <img
+                                  alt=""
+                                  className="absolute block inset-0 max-w-none size-full transition-opacity duration-150 group-hover/icon:opacity-0"
+                                  src={emptyFolderIcon}
+                                />
+                                <img
+                                  alt=""
+                                  className="absolute block inset-0 max-w-none size-full opacity-0 transition-opacity duration-150 group-hover/icon:opacity-100"
+                                  src={fullFolderIcon}
+                                />
+                              </span>
+                            </div>
+                          )}
                         </div>
                         {isRenaming ? (
                           <input
@@ -353,43 +408,12 @@ export default function Sidebar() {
                         )}
                       </div>
                       {canManage && !isRenaming ? (
-                        <div className="content-stretch flex items-center gap-[2px] shrink-0 group-hover:hidden">
+                        <div className="content-stretch flex items-center gap-[2px] shrink-0">
                           <div className="bg-[#1b202e] border border-[#2a3044] border-solid content-stretch flex flex-col items-center px-[5px] py-[3px] relative rounded-[4px] shrink-0">
                             <div className="flex flex-col font-inter font-normal justify-center relative shrink-0 text-[#94a3b8] text-[13px] text-center whitespace-nowrap">
                               <p className="leading-[18px]">{f.count}</p>
                             </div>
                           </div>
-                        </div>
-                      ) : null}
-                      {canManage && !isRenaming ? (
-                        <div className="hidden group-hover:flex items-center gap-[2px] shrink-0">
-                          <button
-                            type="button"
-                            aria-label={`Rename ${f.name}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingFolder(f.name);
-                              setFolderDraft(f.name);
-                            }}
-                            className="flex items-center justify-center p-[2px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#e2e8f0] transition-colors"
-                          >
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Delete ${f.name}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setFolderDeleteTarget(f.name);
-                            }}
-                            className="flex items-center justify-center p-[2px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#f87171] transition-colors"
-                          >
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />
-                            </svg>
-                          </button>
                         </div>
                       ) : null}
                       {!canManage ? (
@@ -399,6 +423,45 @@ export default function Sidebar() {
                           </div>
                         </div>
                       ) : null}
+                      {canManage && !isRenaming && folderMenu === f.name && (
+                        <div
+                          ref={folderMenuRef}
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-[8px] top-1/2 -translate-y-1/2 z-30 flex items-center gap-[3px] bg-[#161922] border border-[#2a3044] border-solid p-[4px] rounded-[8px] shadow-[0px_10px_24px_-6px_rgba(0,0,0,0.6)]"
+                        >
+                          <button
+                            type="button"
+                            aria-label={`Rename ${f.name}`}
+                            title="Rename"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFolderMenu("");
+                              setEditingFolder(f.name);
+                              setFolderDraft(f.name);
+                            }}
+                            className="flex items-center justify-center p-[3px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#e2e8f0] hover:bg-[#1e2332] transition-colors"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete ${f.name}`}
+                            title="Delete"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFolderMenu("");
+                              setFolderDeleteTarget(f.name);
+                            }}
+                            className="flex items-center justify-center p-[3px] relative rounded-[4px] shrink-0 cursor-pointer text-[#94a3b8] hover:text-[#f87171] hover:bg-[#1e2332] transition-colors"
+                          >
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6" />
+                            </svg>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
