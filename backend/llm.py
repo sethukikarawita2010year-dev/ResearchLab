@@ -195,8 +195,11 @@ def _last_user_question(messages: list[dict[str, Any]]) -> str:
 def _web_context(sources: list[dict[str, Any]]) -> str:
     lines = [
         "Web search results for your reference. Use them only when they genuinely help; "
-        "prefer the paper text whenever it covers the topic, and mark any claim you take "
-        "from the web with its source title and URL:"
+        "prefer the paper text whenever it covers the topic. When a claim comes from a "
+        "web result, cite it with that result's number in square brackets (for example "
+        "[1], or [1][3] when several support the same claim). Use only the number -- "
+        "never paste the URL, the domain or the title as the citation, and do not add a "
+        "sources or references list at the end (the app lists used web sources itself):"
     ]
     for index, source in enumerate(sources, start=1):
         lines.append(f"{index}. {source['title']}\n   URL: {source['url']}")
@@ -205,48 +208,111 @@ def _web_context(sources: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _merge_citations(
-    citations: list[dict[str, Any]], web_sources: list[dict[str, Any]], text: str
-) -> list[dict[str, Any]]:
+def _norm_url(url: str) -> str:
+    value = (url or "").strip().rstrip("/")
+    value = re.sub(r"^https?://", "", value, flags=re.I)
+    value = re.sub(r"^www\.", "", value, flags=re.I)
+    return value.lower()
+
+
+def _replace_web_url(text: str, url: str, marker: str) -> tuple[str, bool]:
+    """Swap any pasted rendering of ``url`` for a numeric citation marker."""
+    if not url:
+        return text, False
+    with_scheme = url if "://" in url else f"https://{url}"
+    parsed = urllib.parse.urlsplit(with_scheme)
+    host = re.sub(r"^www\.", "", parsed.netloc or "", flags=re.I)
+    path = (parsed.path or "").rstrip("/")
+    if not host:
+        return text, False
+    escaped = re.escape(host + path)
+    if parsed.query:
+        escaped += r"/?\?" + re.escape(parsed.query)
+    # Markdown link whose target is the source URL: [title](url) -> [n]
+    link_re = re.compile(
+        r"\[[^\]]*\]\(\s*(?:https?://)?(?:www\.)?" + escaped + r"/?\s*\)", re.I
+    )
+    text, linked = link_re.subn(marker, text)
+    # Bare URL, with or without the scheme, www prefix or trailing slash.
+    bare_re = re.compile(
+        r"(?<![\w.-])(?:https?://)?(?:www\.)?"
+        + escaped
+        + r"/?(?![\w-]|/|\.[A-Za-z0-9])",
+        re.I,
+    )
+    text, bare = bare_re.subn(marker, text)
+    return text, bool(linked or bare)
+
+
+def _web_citation(source: dict[str, Any], index: int) -> dict[str, Any]:
+    url = (source.get("url") or "").strip()
+    return {
+        **source,
+        "id": f"web-{index}",
+        "marker": index,
+        "type": "web",
+        "source_type": "web",
+        "source_id": url,
+        "url": url,
+        "title": source.get("title") or url,
+        "page": None,
+        "section": None,
+        "section_title": None,
+        "raw": str(index),
+        "passage": (source.get("snippet") or "").strip(),
+        "start": None,
+        "end": None,
+    }
+
+
+def _apply_web_citations(
+    text: str, citations: list[dict[str, Any]], web_sources: list[dict[str, Any]]
+) -> tuple[str, list[dict[str, Any]]]:
     """Attach only the web sources the answer actually references.
 
-    A SearXNG result is only surfaced as a citation when the generated text
-    cites it by its listed number (``[n]``) or by its URL, so the Sources tab
-    never shows pages that merely helped the model shape its reply.
+    A result is cited when the model used its listed number (``[n]``) or pasted
+    its URL; pasted URLs are rewritten into ``[n]`` markers so the answer shows
+    a citation pill instead of a raw link. Sources that were not used are left
+    out of the Sources tab.
     """
-    merged = list(citations)
-    seen = {c.get("url") for c in merged if c.get("url")}
+    merged = [
+        c for c in citations if (c.get("type") or c.get("source_type")) != "web"
+    ]
+    seen: set[str] = set()
     for index, source in enumerate(web_sources, start=1):
-        url = source.get("url")
-        if not url or url in seen:
+        url = (source.get("url") or "").strip()
+        if not url or _norm_url(url) in seen:
             continue
         marker = f"[{index}]"
-        if marker not in text and url not in text:
+        used = marker in text
+        text, replaced = _replace_web_url(text, url, marker)
+        used = used or replaced
+        if not used:
             continue
-        seen.add(url)
-        position = text.find(marker)
-        end = None
-        if position >= 0:
-            end = position + len(marker)
-        else:
-            position = text.find(url)
-            if position >= 0:
-                end = position + len(url)
-        merged.append(
-            {
-                **source,
-                "id": f"web-{index}",
-                "marker": index,
-                "type": "web",
-                "source_type": "web",
-                "source_id": url,
-                "raw": str(index),
-                "passage": _passage_for(text, position, end) if position >= 0 else "",
-                "start": position if position >= 0 else None,
-                "end": end,
-            }
+        seen.add(_norm_url(url))
+        merged.append(_web_citation(source, index))
+    # Tidy a marker that ended up wrapped in parentheses: "([1])" -> "[1]".
+    text = re.sub(r"\(\s*((?:\[\d+\])+)\s*\)", r"\1", text)
+    return text, merged
+
+
+def _normalize_native_web(
+    text: str, citations: list[dict[str, Any]]
+) -> tuple[str, list[dict[str, Any]]]:
+    """Number OpenAI's built-in web citations and strip their raw URLs."""
+    web = [c for c in citations if (c.get("type") or c.get("source_type")) == "web"]
+    others = [c for c in citations if (c.get("type") or c.get("source_type")) != "web"]
+    normalized: list[dict[str, Any]] = []
+    for index, citation in enumerate(web, start=1):
+        marker = f"[{index}]"
+        url = (citation.get("url") or "").strip()
+        if url:
+            text, _ = _replace_web_url(text, url, marker)
+        normalized.append(
+            {**citation, "id": f"web-{index}", "marker": index, "raw": str(index)}
         )
-    return merged
+    text = re.sub(r"\(\s*((?:\[\d+\])+)\s*\)", r"\1", text)
+    return text, others + normalized
 
 
 # --- Retry / error helpers -------------------------------------------------
@@ -526,42 +592,68 @@ def _parse_pdf_refs(text: str, documents: list[dict[str, Any]] | None = None) ->
     return refs
 
 
+def _field(obj: Any, name: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
 def _collect_web_callouts(response: Any) -> list[dict[str, Any]]:
-    """Extract citations from the OpenAI built-in ``web_search_preview`` tool."""
+    """Extract citations from the OpenAI built-in ``web_search_preview`` tool.
+
+    Handles both legacy ``web_search_callout`` items and the ``url_citation``
+    annotations the Responses API attaches to message text.
+    """
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    try:
-        items = response.output or []
-    except Exception:
-        items = []
-    for item in items:
-        try:
-            if getattr(item, "type", None) != "web_search_callout":
-                continue
-            url = getattr(item, "uri", None) or getattr(item, "name", None)
-        except Exception:
-            continue
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        title = getattr(item, "title", None) or getattr(item, "name", "") or ""
+
+    def add(url: Any, title: Any = "", start: Any = None, end: Any = None) -> None:
+        if not isinstance(url, str) or not url.strip():
+            return
+        key = _norm_url(url)
+        if not key or key in seen:
+            return
+        seen.add(key)
         out.append(
             {
                 "id": f"web-{len(out)}",
                 "type": "web",
                 "source_type": "web",
                 "source_id": url,
-                "title": title,
+                "title": title or url,
                 "url": url,
                 "page": None,
                 "section": None,
                 "section_title": None,
                 "passage": "",
                 "raw": "",
-                "start": None,
-                "end": None,
+                "start": start if isinstance(start, int) else None,
+                "end": end if isinstance(end, int) else None,
             }
         )
+
+    try:
+        items = _field(response, "output", None) or []
+    except Exception:
+        items = []
+    for item in items:
+        item_type = _field(item, "type")
+        if item_type in ("web_search_callout", "web_search_call"):
+            add(
+                _field(item, "uri") or _field(item, "url") or _field(item, "name"),
+                _field(item, "title") or _field(item, "name") or "",
+            )
+            continue
+        for part in _field(item, "content", None) or []:
+            for annotation in _field(part, "annotations", None) or []:
+                if _field(annotation, "type") != "url_citation":
+                    continue
+                add(
+                    _field(annotation, "url"),
+                    _field(annotation, "title") or "",
+                    _field(annotation, "start_index"),
+                    _field(annotation, "end_index"),
+                )
     return out
 
 
@@ -649,6 +741,9 @@ def chat_answer(
         + "Cite every claim that comes from a paper with a reference in the form "
         "[p. PAGE \u00A7SECTION] or [p. PAGE], using the printed page numbers (the text is "
         "split with '----- PAGE N -----' markers).\n"
+        "When web search results are included, cite each claim taken from them with the "
+        "result's bracketed number (for example [1]); never paste the URL, domain or title "
+        "as the citation.\n"
         "If you are not certain about something, say so rather than guessing.\n"
         + annotation_note
     ) + _language_prompt(language)
@@ -696,10 +791,17 @@ def chat_answer(
         _save_thread(chat_id, doc_ids, response.id)
         if use_native_search:
             result["web_search"] = True
+            result["text"], result["citations"] = _normalize_native_web(
+                result.get("text", text), result.get("citations", [])
+            )
         elif web_search:
             result["web_search"] = True
             if web_sources:
-                result["citations"] = _merge_citations(result.get("citations", []), web_sources, text)
+                result["text"], result["citations"] = _apply_web_citations(
+                    result.get("text", text),
+                    result.get("citations", []),
+                    web_sources,
+                )
     except Exception as exc:
         if not use_native_search or not _is_quota_or_permission_error(exc):
             raise
