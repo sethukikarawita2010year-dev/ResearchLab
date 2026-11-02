@@ -595,6 +595,10 @@ export default function Chat() {
   }, [annotations]);
   const startedRef = useRef(false);
   const handledKeyRef = useRef(null);
+  const summaryDoneRef = useRef(new Set());
+  const summaryBusyRef = useRef(new Set());
+  const handledConversionRef = useRef(new Set());
+  const answeredRef = useRef(new Set());
   const sendGuard = useRef(Promise.resolve());
   const enqueue = (fn) => {
     const run = sendGuard.current.then(fn);
@@ -710,14 +714,35 @@ export default function Chat() {
 
   const runTurn = async (userMsg, docId, docIdList, { newDoc = false } = {}) => {
     const alreadySummarized = !newDoc && messagesRef.current.some((m) => m.kind === "summary");
-    if (!alreadySummarized) {
+    // Summaries are per document: never build a second one for a doc that
+    // already has one (an in-flight run counts too), even if a hydration or a
+    // pending-attachment pass enqueues the same turn twice.
+    const needsSummary =
+      Boolean(docId) &&
+      !summaryDoneRef.current.has(docId) &&
+      !summaryBusyRef.current.has(docId);
+    if (needsSummary) {
+      summaryBusyRef.current.add(docId);
       setBusy("analyzing");
       try {
         const summary = await analyzePaper({ documentId: docId });
         addSummary(summary);
+        summaryDoneRef.current.add(docId);
       } catch (err) {
         addError("Structured summary failed", err);
+      } finally {
+        summaryBusyRef.current.delete(docId);
       }
+    }
+    // A hydration that runs twice enqueues the same persisted user message
+    // again; never answer one message twice (the summary above is also guarded
+    // per document, so a missing summary can still be regenerated).
+    if (userMsg?.id) {
+      if (answeredRef.current.has(userMsg.id)) {
+        setBusy("idle");
+        return;
+      }
+      answeredRef.current.add(userMsg.id);
     }
     const userContent = (userMsg.content || "").trim();
     if (!userContent) {
@@ -767,9 +792,10 @@ export default function Chat() {
     // document; upload it up-front so the summary below can use a real id.
     // It can arrive as an in-memory File (same-tab transfer) or as a
     // download reference in the navigation state (survives a cold mount).
-    if (!pendingFile && state.conversion?.downloadUrl) {
+    const conversionKey = state.conversion?.downloadUrl;
+    if (!pendingFile && conversionKey && !handledConversionRef.current.has(conversionKey)) {
       try {
-        const res = await fetch(conversionDownloadUrl(state.conversion.downloadUrl), {
+        const res = await fetch(conversionDownloadUrl(conversionKey), {
           credentials: "include",
         });
         if (res.ok) {
@@ -777,6 +803,9 @@ export default function Chat() {
           pendingFile = new File([blob], state.conversion.filename || "document.pdf", {
             type: "application/pdf",
           });
+          // The handoff is imported once per mount; a second hydrate must not
+          // upload the same converted PDF (and summarize it) again.
+          handledConversionRef.current.add(conversionKey);
         }
       } catch {
         /* fall through — nothing attached */
@@ -882,6 +911,9 @@ export default function Chat() {
 
     setMessages(restored);
     messagesRef.current = restored;
+    if (docId && restored.some((m) => m.kind === "summary")) {
+      summaryDoneRef.current.add(docId);
+    }
 
     if (appendedDoc) {
       // Append the transferred paper to the end of the conversation: surface
