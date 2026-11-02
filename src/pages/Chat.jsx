@@ -599,6 +599,7 @@ export default function Chat() {
   const summaryBusyRef = useRef(new Set());
   const handledConversionRef = useRef(new Set());
   const answeredRef = useRef(new Set());
+  const annotationButtonRef = useRef(null);
   const sendGuard = useRef(Promise.resolve());
   const enqueue = (fn) => {
     const run = sendGuard.current.then(fn);
@@ -1002,11 +1003,17 @@ export default function Chat() {
       if (e.key === "Escape") setPendingSelection(null);
     };
     const onScroll = () => setPendingSelection(null);
+    const onPointerDown = (e) => {
+      if (annotationButtonRef.current?.contains(e.target)) return;
+      setPendingSelection(null);
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onScroll, true);
+    document.addEventListener("mousedown", onPointerDown);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", onScroll, true);
+      document.removeEventListener("mousedown", onPointerDown);
     };
   }, [pendingSelection]);
 
@@ -1578,6 +1585,7 @@ export default function Chat() {
       )}
       {pendingSelection && pendingSelection.rect && (
         <div
+          ref={annotationButtonRef}
           className="absolute z-[130]"
           style={{
             left: Math.max(
@@ -1872,7 +1880,7 @@ export default function Chat() {
                   )}
 
                   <div className="font-inter font-semibold text-[#94a3b8] text-[16px] tracking-[0.8px] uppercase leading-[24px] px-[20px] pt-[16px] pb-[8px]">
-                    Referenced Corpus
+                    Referenced Folder
                   </div>
                   {sources.length ? (
                     <div className="content-stretch flex flex-col gap-[8px] items-start px-[16px] pb-[16px] w-full">
